@@ -136,6 +136,27 @@ def main() -> int:
 
     win._toggle_estop()
     estop_on = engine.state.snapshot().emergency_stop
+    win._toggle_estop()  # clear before replay so safety doesn't interfere
+
+    # Replay: record a short synthetic session, then play it back through the
+    # engine and confirm it flows as a REPLAYED stream + transport works.
+    from neurobci.core.app_state import ConnectionStatus
+    from neurobci.recording.synthetic_session import record_p300_session
+    sess = record_p300_session(tempfile.mkdtemp(), n_stimuli=40,
+                               p300_amp_uv=12.0, seed=0)
+    engine.stop()
+    win.tabs.setCurrentWidget(win.replay_ws)
+    win.replay_ws.set_session(str(sess))
+    win.replay_ws.speed_combo.setCurrentIndex(3)   # 4x
+    win.replay_ws._start()
+    _pump(app, 0.8)
+    rsnap = engine.state.snapshot()
+    replay_running = engine.running and rsnap.connection == ConnectionStatus.REPLAYED
+    replay_samples = engine.buffer.total_written if engine.buffer else 0
+    win.replay_ws._toggle_pause()
+    win.replay_ws._toggle_pause()
+    win.replay_ws._stop()
+    replay_ok = replay_running and replay_samples > 0
 
     win.close()
     app.processEvents()
@@ -155,6 +176,7 @@ def main() -> int:
     print(f"ctrl executed   : {ctrl_executed}")
     print(f"board moved     : {board_moved}")
     print(f"estop blocked   : {estop_blocked}")
+    print(f"replay ok       : {replay_ok} ({replay_samples} samples)")
     print(f"recorded samples: {stats.n_samples}")
     print(f"loaded samples  : {loaded.n_samples}")
     print(f"loaded markers  : {len(loaded.markers)}")
@@ -176,6 +198,7 @@ def main() -> int:
         and ctrl_executed
         and board_moved
         and estop_blocked
+        and replay_ok
         and stats.n_samples > 0
         and loaded.n_samples == stats.n_samples
         and len(loaded.markers) == 2

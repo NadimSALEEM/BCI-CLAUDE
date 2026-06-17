@@ -45,6 +45,15 @@ def build_source(config: AppConfig) -> EEGSource:
         )
     if kind == "lsl":
         return LSLSource(acq=config.acquisition, channels=config.channels)
+    if kind == "replay":
+        from neurobci.acquisition.replay_source import ReplaySource
+        if not config.acquisition.replay_path:
+            raise ValueError("Replay source requires acquisition.replay_path.")
+        return ReplaySource(
+            session=config.acquisition.replay_path,
+            speed=config.acquisition.replay_speed,
+            loop=config.acquisition.replay_loop,
+        )
     raise ValueError(f"Unknown / not-yet-implemented source type: {kind!r}")
 
 
@@ -77,6 +86,11 @@ class AcquisitionEngine:
     @property
     def stream_info(self) -> StreamInfo | None:
         return self._source.info if self._source else None
+
+    @property
+    def source(self) -> EEGSource | None:
+        """The active source (e.g. to drive replay transport controls)."""
+        return self._source
 
     @property
     def running(self) -> bool:

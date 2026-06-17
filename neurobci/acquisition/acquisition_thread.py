@@ -55,7 +55,14 @@ class AcquisitionThread:
         self._rate_t0 = 0.0
         self._last_data_wall = 0.0
         self._last_ts = float("nan")
-        self._simulated = source.info.source_kind == "simulated"
+        # Simulated and replayed sources are contiguous + self-clocked, so we
+        # don't apply live-stream gap/stale heuristics to them.
+        self._source_kind = source.info.source_kind
+        self._simulated = self._source_kind in ("simulated", "replay")
+        self._live_status = {
+            "simulated": ConnectionStatus.SIMULATED,
+            "replay": ConnectionStatus.REPLAYED,
+        }.get(self._source_kind, ConnectionStatus.CONNECTED)
 
     def set_recorder(self, recorder) -> None:
         """Attach (or detach with ``None``) a session recorder."""
@@ -145,9 +152,7 @@ class AcquisitionThread:
 
         self._last_data_wall = now
         prev = self._state.connection
-        new_status = (
-            ConnectionStatus.SIMULATED if self._simulated else ConnectionStatus.CONNECTED
-        )
+        new_status = self._live_status
         self._state.update(
             samples_received=self._buffer.total_written,
             measured_sfreq=measured,

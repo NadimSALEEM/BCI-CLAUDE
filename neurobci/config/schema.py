@@ -61,6 +61,9 @@ class AcquisitionConfig:
     buffer_seconds: float = 30.0            # ring-buffer history kept in RAM
     pull_interval_s: float = 0.02           # acquisition loop period (~50 Hz)
     sfreq_tolerance: float = 0.05           # +/- fraction flagged as unstable
+    replay_path: str = ""                   # session dir for replay source
+    replay_speed: float = 1.0
+    replay_loop: bool = False
 
 
 @dataclass

@@ -1,0 +1,6 @@
+# Development-only dependencies. The test suite itself runs on the stdlib
+# unittest runner, so these are optional conveniences.
+-r requirements.txt
+
+pytest>=8.0
+coverage>=7.0

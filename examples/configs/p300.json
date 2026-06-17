@@ -1,0 +1,142 @@
+{
+  "schema_version": 1,
+  "profile_name": "p300",
+  "paradigm": "p300",
+  "channels": {
+    "montage_name": "enobio19",
+    "eeg_channels": [
+      "P7",
+      "P4",
+      "Cz",
+      "Pz",
+      "P3",
+      "P8",
+      "O1",
+      "O2",
+      "T8",
+      "F8",
+      "C4",
+      "F4",
+      "Fp2",
+      "Fz",
+      "C3",
+      "F3",
+      "Fp1",
+      "T7",
+      "F7"
+    ],
+    "eog_channels": [
+      "EOG"
+    ]
+  },
+  "acquisition": {
+    "source_type": "simulated",
+    "lsl_stream_name": "",
+    "lsl_stream_type": "EEG",
+    "expected_sfreq": 500.0,
+    "buffer_seconds": 30.0,
+    "pull_interval_s": 0.02,
+    "sfreq_tolerance": 0.05,
+    "replay_path": "",
+    "replay_speed": 1.0,
+    "replay_loop": false
+  },
+  "simulation": {
+    "seed": 1234,
+    "alpha_amp_uv": 12.0,
+    "theta_amp_uv": 6.0,
+    "beta_amp_uv": 4.0,
+    "pink_noise_uv": 8.0,
+    "white_noise_uv": 3.0,
+    "line_noise_uv": 2.0,
+    "line_freq_hz": 50.0,
+    "drift_uv": 5.0,
+    "blink_rate_hz": 0.3,
+    "blink_amp_uv": 90.0,
+    "flat_channels": [],
+    "noisy_channels": []
+  },
+  "preprocessing": {
+    "enabled": true,
+    "mode": "causal",
+    "stages": [
+      {
+        "type": "highpass",
+        "enabled": true,
+        "params": {
+          "cutoff_hz": 0.5,
+          "order": 4
+        }
+      },
+      {
+        "type": "notch",
+        "enabled": true,
+        "params": {
+          "freq_hz": 50.0,
+          "quality": 30.0
+        }
+      },
+      {
+        "type": "lowpass",
+        "enabled": true,
+        "params": {
+          "cutoff_hz": 20.0,
+          "order": 4
+        }
+      },
+      {
+        "type": "car",
+        "enabled": true,
+        "params": {}
+      }
+    ]
+  },
+  "control": {
+    "n_items": 6,
+    "test_mode": false,
+    "selection": {
+      "min_repetitions": 3,
+      "max_repetitions": 15,
+      "confidence_margin": 0.12,
+      "min_confidence": 0.5,
+      "timeout_s": 12.0
+    },
+    "decision": {
+      "confidence_threshold": 0.6,
+      "vote_window": 5,
+      "min_agree": 3,
+      "refractory_s": 1.0,
+      "neutral_label": "none"
+    },
+    "safety": {
+      "external_control_enabled": false,
+      "min_confidence": 0.5,
+      "max_commands_per_min": 60.0,
+      "require_connected": true,
+      "require_quality": true
+    }
+  },
+  "spectral": {
+    "window_s": 4.0,
+    "nperseg_s": 1.0,
+    "fmax_hz": 45.0,
+    "show_indices": true
+  },
+  "recording": {
+    "directory": "recordings",
+    "participant_id": "anon",
+    "notes": ""
+  },
+  "ui": {
+    "raw_window_s": 10.0,
+    "refresh_hz": 30.0,
+    "default_scale_uv": 75.0,
+    "theme": "dark",
+    "basic_mode": true
+  },
+  "logging": {
+    "level": "INFO",
+    "to_file": true,
+    "directory": "logs"
+  }
+}

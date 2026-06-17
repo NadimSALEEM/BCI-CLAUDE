@@ -12,11 +12,10 @@ entire application can be developed and used without hardware.
 
 ---
 
-## Status — Phases 1–7 complete
+## Status — all 9 phases complete
 
-This repository implements **Phase 1 (Core)**, **Phase 2 (Acquisition)**,
-**Phase 3 (Preprocessing)**, **Phase 4 (P300)**, **Phase 5 (control demo)**,
-**Phase 6 (more paradigms)** and **Phase 7 (spectral/state)** end to end:
+This repository implements the full roadmap **Phase 1 (Core)** … **Phase 9
+(validation & packaging)** end to end:
 
 | Area | Status |
 |------|--------|
@@ -24,7 +23,7 @@ This repository implements **Phase 1 (Core)**, **Phase 2 (Acquisition)**,
 | Configuration system (typed schema + JSON profiles) | ✅ |
 | Application state + event bus | ✅ |
 | Thread-safe ring buffer (acquisition/UI decoupling) | ✅ |
-| Source abstraction: **Simulated**, **LSL** | ✅ (Replay = Phase 8) |
+| Source abstraction: **Simulated**, **LSL**, **Replay** | ✅ |
 | Realistic EEG simulator (alpha/theta/beta, 1/f, line, drift, blinks, faults) | ✅ |
 | LSL stream discovery (scan & pick) | ✅ |
 | Channel/sfreq validation + manual EEG/EOG correction | ✅ |
@@ -51,13 +50,16 @@ This repository implements **Phase 1 (Core)**, **Phase 2 (Acquisition)**,
 | Paradigm-selectable simulated calibration in the GUI | ✅ |
 | **Spectral: PSD, abs/relative band power, IAF, regional aggregation** | ✅ |
 | **Cognitive-state indices (engagement/workload/drowsiness) — formula + raw values + caveats** | ✅ |
-| **Band-power topomaps + baseline-relative change + temporal traces** | ✅ |
-| PyQt5 GUI: + Spectral/State + Calibration + Control/BCI tabs (9 total) | ✅ |
+| Band-power topomaps + baseline-relative change + temporal traces | ✅ |
+| **Replay recorded sessions (play/pause/seek/speed/loop) — all tabs work on it** | ✅ |
+| **Virtual LSL re-publishing + configurable artifact injection** | ✅ |
+| Ground-truth simulate→record→replay→decode regression | ✅ |
+| **Performance profiling (preprocessing ~750× real-time, inference <0.3 ms)** | ✅ |
+| **Packaging (`python -m neurobci`, console script, LICENSE), example configs + workflows** | ✅ |
+| **Consolidated runner + full user/developer/safety docs** | ✅ |
+| PyQt5 GUI: 10 workspaces | ✅ |
 | Emergency-stop safety flag (surfaced everywhere, gates every command) | ✅ |
-| Tests (132 unit/integration) + headless smoke scripts | ✅ |
-
-Replay/advanced simulation (Phase 8) and validation/packaging (Phase 9)
-remain — see [Roadmap](#roadmap).
+| Tests (148 unit/integration) + smoke scripts + profiler | ✅ |
 
 ---
 
@@ -111,6 +113,9 @@ Then:
 - **Control / BCI** — drive an on-screen selection demo through the real
   decision + safety + command stack; test mode and emergency stop gate
   execution (see [`docs/control.md`](docs/control.md)).
+- **Replay** — load a recorded session and play it back (play/pause/seek/
+  speed/loop) through the engine so every tab works on it; inject artifacts
+  or re-publish as a virtual LSL stream (see [`docs/replay.md`](docs/replay.md)).
 - **Recording** — set a pseudonymous participant id + notes, **Start
   recording**, drop event markers, then **Stop**. Sessions are written to
   `recordings/` (see [`docs/recording.md`](docs/recording.md)).
@@ -167,7 +172,7 @@ module map.
 neurobci/
   config/        typed schema + JSON profile manager
   core/          logging, ring buffer, stream info, app state, event bus
-  acquisition/   EEGSource ABC, simulated/LSL sources, discovery, validation, acq thread, engine
+  acquisition/   EEGSource ABC, simulated/LSL/replay sources, discovery, validation, LSL publisher, artifact injection, engine
   preprocessing/ ordered pipeline (filters, notch, CAR, detrend) + artifact detection
   paradigms/     framework + P300 / motor-imagery / SSVEP / ErrP + synthetic generators
   bci/           epoching, features, models, CCA, evaluation, calibration, online, model store
@@ -216,8 +221,16 @@ present from Phase 1 and surfaced in the status bar at all times.
 5. **Control demo** ✅ — decision layer, safety gating, command router + history + online metrics, on-screen selection task
 6. **Additional paradigms** ✅ — motor imagery (active), SSVEP (CCA), ErrP correction, flexible command mapping
 7. **Spectral & cognitive-state monitoring** ✅ — PSD/band power, IAF, transparent indices, topomaps, baselines
-8. Replay + advanced simulation (virtual LSL)
-9. Validation, packaging, docs, example datasets
+8. **Replay + advanced simulation** ✅ — session replay (transport), virtual LSL, artifact injection, ground-truth regression
+9. **Validation & packaging** ✅ — consolidated runner, profiling, packaging, example configs/workflows, full docs
+
+## Documentation
+
+- [Installation](docs/installation.md) · [User guide](docs/user_guide.md) · [Troubleshooting](docs/troubleshooting.md)
+- [Architecture](docs/architecture.md) · [Developer / extension guide](docs/developer.md)
+- Modules: [preprocessing](docs/preprocessing.md) · [P300](docs/paradigm_p300.md) · [other paradigms](docs/paradigms_extra.md) · [control & safety logic](docs/control.md) · [spectral/state](docs/spectral.md) · [recording](docs/recording.md) · [replay](docs/replay.md)
+- **Read before trusting results:** [Scientific limitations](docs/scientific_limitations.md) · [Safety](docs/safety.md)
+- Examples: [`examples/quickstart.py`](examples/quickstart.py), [`examples/offline_analysis.py`](examples/offline_analysis.py), [`examples/configs/`](examples/configs/)
 
 ## License
 

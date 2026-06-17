@@ -23,6 +23,7 @@ from neurobci.ui.workspaces.control_ws import ControlWorkspace
 from neurobci.ui.workspaces.preprocessing_ws import PreprocessingWorkspace
 from neurobci.ui.workspaces.raw_eeg_ws import RawEEGWorkspace
 from neurobci.ui.workspaces.recording_ws import RecordingWorkspace
+from neurobci.ui.workspaces.replay_ws import ReplayWorkspace
 from neurobci.ui.workspaces.signal_quality_ws import SignalQualityWorkspace
 from neurobci.ui.workspaces.spectral_ws import SpectralWorkspace
 from neurobci.version import APP_NAME, __version__
@@ -81,6 +82,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.calibration_ws = CalibrationWorkspace(self)
         self.control_ws = ControlWorkspace(self)
         self.spectral_ws = SpectralWorkspace(self)
+        self.replay_ws = ReplayWorkspace(self)
         self.recording_ws = RecordingWorkspace(self)
         self.tabs.addTab(self.acq_ws, "Connection / Acquisition")
         self.tabs.addTab(self.channels_ws, "Channels")
@@ -90,6 +92,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.tabs.addTab(self.spectral_ws, "Spectral / State")
         self.tabs.addTab(self.calibration_ws, "Calibration")
         self.tabs.addTab(self.control_ws, "Control / BCI")
+        self.tabs.addTab(self.replay_ws, "Replay")
         self.tabs.addTab(self.recording_ws, "Recording")
         self.setCentralWidget(self.tabs)
 
