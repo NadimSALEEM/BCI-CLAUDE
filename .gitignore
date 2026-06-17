@@ -9,7 +9,7 @@ dist/
 # Project runtime artifacts
 logs/
 *.log
-recordings/
+#recordings/
 models/
 
 # Keep configs/ but ignore scratch profiles if desired:
