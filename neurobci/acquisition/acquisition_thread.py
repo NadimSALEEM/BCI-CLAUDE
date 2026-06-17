@@ -35,6 +35,9 @@ class AcquisitionThread:
         event_bus: EventBus,
         pull_interval_s: float = 0.02,
         stale_after_s: float = 1.0,
+        processed_buffer: RingBuffer | None = None,
+        pipeline=None,
+        pipeline_lock: threading.Lock | None = None,
     ) -> None:
         self._source = source
         self._buffer = ring_buffer
@@ -42,6 +45,13 @@ class AcquisitionThread:
         self._bus = event_bus
         self._pull_interval = pull_interval_s
         self._stale_after = stale_after_s
+
+        # Optional causal preprocessing -> a parallel "processed" buffer that
+        # downstream consumers read. The pipeline object may be swapped by the
+        # engine; the lock makes the read/swap safe.
+        self._processed_buffer = processed_buffer
+        self._pipeline = pipeline
+        self._pipeline_lock = pipeline_lock or threading.Lock()
 
         self._thread: threading.Thread | None = None
         self._stop = threading.Event()
@@ -68,6 +78,11 @@ class AcquisitionThread:
         """Attach (or detach with ``None``) a session recorder."""
         with self._recorder_lock:
             self._recorder = recorder
+
+    def set_pipeline(self, pipeline) -> None:
+        """Swap the live preprocessing pipeline (engine holds the same lock)."""
+        with self._pipeline_lock:
+            self._pipeline = pipeline
 
     # ----- lifecycle ----------------------------------------------------- #
 
@@ -120,6 +135,7 @@ class AcquisitionThread:
 
     def _handle_data(self, data, ts, now, sfreq) -> None:
         self._buffer.append(data, ts)
+        self._write_processed(data, ts)
 
         # Persist to the active recording, if any. A recorder failure must
         # never stop acquisition.
@@ -162,6 +178,25 @@ class AcquisitionThread:
         )
         if prev != new_status:
             self._bus.publish(EVT_CONNECTION_CHANGED, new_status)
+
+    def _write_processed(self, data, ts) -> None:
+        """Apply the causal pipeline and store the result in the parallel
+        buffer. Runs on the single acquisition thread, so filter state is
+        continuous; a failure must never stop acquisition (falls back to raw).
+        """
+        if self._processed_buffer is None:
+            return
+        try:
+            with self._pipeline_lock:
+                pipeline = self._pipeline
+                processed = pipeline.process_chunk(data) if pipeline is not None else data
+            self._processed_buffer.append(processed, ts)
+        except Exception:  # noqa: BLE001
+            logger.exception("Preprocessing failed; storing raw in processed buffer.")
+            try:
+                self._processed_buffer.append(data, ts)
+            except Exception:  # noqa: BLE001
+                logger.debug("Processed-buffer fallback append failed.", exc_info=True)
 
     def _maybe_mark_stale(self, now: float) -> None:
         if self._simulated:

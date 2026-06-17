@@ -95,6 +95,23 @@ def _band_ratio(psd: np.ndarray, freqs: np.ndarray, lo: float, hi: float) -> flo
     return float(np.sum(psd[mask])) / total
 
 
+def dc_robust(data: np.ndarray, sfreq: float, cutoff_hz: float = 0.5) -> np.ndarray:
+    """Remove DC offset + slow drift so amplitude/railing reflect the *AC*
+    signal. Raw EEG (especially dry Enobio) carries huge electrode offsets and
+    drift -- tens of thousands of microvolts -- that are **not** faults and are
+    removed by the mandatory high-pass anyway. Judging "railing" on absolute
+    amplitude without this falsely condemns perfectly good raw data.
+    """
+    if data.ndim != 2 or data.shape[0] < 32:
+        return data - np.mean(data, axis=0, keepdims=True)
+    wc = max(cutoff_hz / (sfreq / 2.0), 1e-4)
+    b, a = signal.butter(2, wc, btype="highpass")
+    try:
+        return signal.filtfilt(b, a, data, axis=0)
+    except Exception:  # noqa: BLE001 - short/odd windows: fall back to mean removal
+        return data - np.mean(data, axis=0, keepdims=True)
+
+
 def compute_quality(
     data: np.ndarray,
     info: StreamInfo,
@@ -111,13 +128,16 @@ def compute_quality(
         return QualityReport(channels=[], n_samples=n, sfreq=info.sfreq)
 
     sfreq = info.sfreq
+    # Assess amplitude/railing/spectrum on the DC+drift-removed signal so a
+    # normal raw electrode offset is never mistaken for a railing electrode.
+    ac = dc_robust(data, sfreq)
     # One Welch estimate for the whole array (per-column), if long enough.
     nperseg = int(min(n, max(64, sfreq)))  # ~1 s or the whole window
-    freqs, psd = signal.welch(data, fs=sfreq, nperseg=nperseg, axis=0)
+    freqs, psd = signal.welch(ac, fs=sfreq, nperseg=nperseg, axis=0)
 
     channels: list[ChannelQuality] = []
     for ci in range(info.n_channels):
-        x = data[:, ci]
+        x = ac[:, ci]
         std = float(np.std(x))
         rms = float(np.sqrt(np.mean(x**2)))
         ptp = float(np.ptp(x))

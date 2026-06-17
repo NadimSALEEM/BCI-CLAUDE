@@ -36,6 +36,12 @@ class RawEEGWorkspace(QtWidgets.QWidget):
             lambda v: self.plot.set_scale(v)
         )
 
+        self.source_combo = QtWidgets.QComboBox()
+        self.source_combo.addItem("Raw", False)
+        self.source_combo.addItem("Preprocessed", True)
+        self.source_combo.setToolTip(
+            "Show the raw stream or the shared preprocessing output.")
+
         self.pause_chk = QtWidgets.QCheckBox("Pause")
 
         ctrl.addWidget(QtWidgets.QLabel("Window:"))
@@ -43,6 +49,9 @@ class RawEEGWorkspace(QtWidgets.QWidget):
         ctrl.addSpacing(12)
         ctrl.addWidget(QtWidgets.QLabel("Scale (±):"))
         ctrl.addWidget(self.scale_spin)
+        ctrl.addSpacing(12)
+        ctrl.addWidget(QtWidgets.QLabel("Show:"))
+        ctrl.addWidget(self.source_combo)
         ctrl.addSpacing(12)
         ctrl.addWidget(self.pause_chk)
         ctrl.addStretch(1)
@@ -64,5 +73,8 @@ class RawEEGWorkspace(QtWidgets.QWidget):
         if info is None or engine.buffer is None:
             return
         self.plot.set_channels(info.channel_names, info.channel_kinds)
-        data, _ = engine.latest_seconds(self.window_spin.value())
+        if self.source_combo.currentData():
+            data, _ = engine.latest_processed_seconds(self.window_spin.value())
+        else:
+            data, _ = engine.latest_seconds(self.window_spin.value())
         self.plot.update_data(data, info.sfreq)

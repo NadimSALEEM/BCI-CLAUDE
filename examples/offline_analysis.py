@@ -39,7 +39,10 @@ def main() -> int:
 
     print("\n2) Offline preprocessing (zero-phase) on the first 10 s...")
     cfg = AppConfig()
-    pipe = Pipeline.from_config(cfg.preprocessing, session.sfreq, session.channel_kinds)
+    pipe = Pipeline.from_config(
+        cfg.preprocessing, session.sfreq,
+        session.channel_kinds, session.channel_names,
+    )
     window = session.data[: int(10 * session.sfreq)]
     clean = pipe.apply_window(window, mode=MODE_OFFLINE)
     print(f"   processed window shape {clean.shape}")

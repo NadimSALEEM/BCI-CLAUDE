@@ -11,10 +11,11 @@ from __future__ import annotations
 
 import logging
 
-from PyQt5 import QtCore, QtWidgets
+from PyQt5 import QtCore, QtGui, QtWidgets
 
 from neurobci.preprocessing.artifacts import Severity, detect_artifacts
 from neurobci.preprocessing.pipeline import MODE_CAUSAL, MODE_OFFLINE, Pipeline
+from neurobci.preprocessing.stages import STAGE_REGISTRY, make_stage
 from neurobci.ui.widgets.stacked_trace import StackedTracePlot
 
 logger = logging.getLogger(__name__)
@@ -85,7 +86,6 @@ class PreprocessingWorkspace(QtWidgets.QWidget):
         super().__init__()
         self._ctl = controller
         self._pipe: Pipeline | None = None
-        self._pipe_key = None
         self._build()
 
     def _build(self) -> None:
@@ -137,6 +137,7 @@ class PreprocessingWorkspace(QtWidgets.QWidget):
         btns = QtWidgets.QHBoxLayout()
         for text, slot in (
             ("↑", lambda: self._move(-1)), ("↓", lambda: self._move(1)),
+            ("Add…", self._add), ("Remove", self._remove),
             ("Edit…", self._edit), ("Reset", self._reset),
         ):
             b = QtWidgets.QPushButton(text)
@@ -146,6 +147,23 @@ class PreprocessingWorkspace(QtWidgets.QWidget):
         self.save_btn.clicked.connect(self._save_profile)
         btns.addWidget(self.save_btn)
         left_l.addLayout(btns)
+
+        self.calibrate_btn = QtWidgets.QPushButton("Calibrate artifact removal (ICA / ASR / bad ch.)")
+        self.calibrate_btn.setToolTip(
+            "Fit the calibrated stages on the last ~10 s of data. Do this on a "
+            "stretch you believe is relatively clean (resting, eyes open).")
+        self.calibrate_btn.clicked.connect(self._calibrate)
+        self.calibrate_btn.setEnabled(False)
+        left_l.addWidget(self.calibrate_btn)
+
+        feeds = QtWidgets.QLabel(
+            "This pipeline is shared: in causal mode its output is the live "
+            "stream that the Signal Quality, Spectral / State and Control "
+            "tabs read. Edits take effect immediately."
+        )
+        feeds.setWordWrap(True)
+        feeds.setStyleSheet("color:#7fb0c8; font-style:italic;")
+        left_l.addWidget(feeds)
         self.warnings = QtWidgets.QLabel("")
         self.warnings.setWordWrap(True)
         self.warnings.setStyleSheet("color:#e0c040;")
@@ -171,17 +189,41 @@ class PreprocessingWorkspace(QtWidgets.QWidget):
     # ----- pipeline lifecycle ------------------------------------------- #
 
     def _ensure_pipeline(self, info) -> bool:
-        key = (info.sfreq, tuple(info.channel_kinds))
-        if self._pipe is not None and key == self._pipe_key:
+        """Bind to the engine's *shared* live pipeline.
+
+        The Preprocessing tab no longer owns a private pipeline: it edits the
+        one the acquisition thread uses, so every downstream consumer sees the
+        same processing. We only repopulate the UI when the engine swaps the
+        pipeline object (e.g. on (re)start or a profile reset).
+        """
+        pipe = self._ctl.engine.pipeline
+        if pipe is None or pipe is self._pipe:
             return False
-        self._pipe = Pipeline.from_config(
-            self._ctl.config.preprocessing, info.sfreq, info.channel_kinds
-        )
-        self._pipe.enabled = self.enabled_chk.isChecked()
-        self._pipe.mode = self.mode_combo.currentData()
-        self._pipe_key = key
+        self._pipe = pipe
+        # Reflect the engine pipeline's current mode/enabled in the controls.
+        self.enabled_chk.blockSignals(True)
+        self.enabled_chk.setChecked(pipe.enabled)
+        self.enabled_chk.blockSignals(False)
+        idx = self.mode_combo.findData(pipe.mode)
+        if idx >= 0:
+            self.mode_combo.blockSignals(True)
+            self.mode_combo.setCurrentIndex(idx)
+            self.mode_combo.blockSignals(False)
         self._populate_stage_list()
         return True
+
+    def _edit_pipeline(self, mutate) -> None:
+        """Run ``mutate(pipe)`` under the engine lock, then resync UI/config.
+
+        Structural or parameter changes clear streaming filter state so a
+        removed/edited stage's stale history cannot leak into the live stream.
+        """
+        if self._pipe is None:
+            return
+        with self._ctl.engine.pipeline_lock:
+            mutate(self._pipe)
+            self._pipe.reset()
+        self._sync_config()
 
     def _populate_stage_list(self) -> None:
         self.stage_list.blockSignals(True)
@@ -198,12 +240,17 @@ class PreprocessingWorkspace(QtWidgets.QWidget):
                     item.setForeground(QtCore.Qt.gray)
                 self.stage_list.addItem(item)
         self.stage_list.blockSignals(False)
+        if hasattr(self, "calibrate_btn"):
+            self.calibrate_btn.setEnabled(bool(self._pipe and self._pipe.requires_fit))
         self._refresh_warnings()
 
     def _stage_summary(self, st) -> str:
         params = ", ".join(f"{k}={v}" for k, v in st.params.items())
         rt = "" if st.realtime_safe else "  [offline-only]"
-        return f"{st.type_name}{rt}" + (f"  ({params})" if params else "")
+        fit = ""
+        if getattr(st, "requires_fit", False):
+            fit = "  [calibrated]" if st.fitted else "  [NEEDS CALIBRATION]"
+        return f"{st.type_name}{rt}{fit}" + (f"  ({params})" if params else "")
 
     # ----- edits --------------------------------------------------------- #
 
@@ -227,8 +274,8 @@ class PreprocessingWorkspace(QtWidgets.QWidget):
         if self._pipe is None:
             return
         row = self.stage_list.row(item)
-        self._pipe.set_enabled(row, item.checkState() == QtCore.Qt.Checked)
-        self._sync_config()
+        checked = item.checkState() == QtCore.Qt.Checked
+        self._edit_pipeline(lambda p: p.set_enabled(row, checked))
         self._refresh_warnings()
 
     def _move(self, delta: int) -> None:
@@ -237,10 +284,36 @@ class PreprocessingWorkspace(QtWidgets.QWidget):
         row = self.stage_list.currentRow()
         if row < 0:
             return
-        self._pipe.move(row, delta)
-        self._sync_config()
+        self._edit_pipeline(lambda p: p.move(row, delta))
         self._populate_stage_list()
         self.stage_list.setCurrentRow(min(max(row + delta, 0), self.stage_list.count() - 1))
+
+    def _add(self) -> None:
+        if self._pipe is None:
+            QtWidgets.QMessageBox.information(
+                self, "Not running",
+                "Start acquisition first — the pipeline is created with the stream.")
+            return
+        types = sorted(STAGE_REGISTRY.keys())
+        choice, ok = QtWidgets.QInputDialog.getItem(
+            self, "Add preprocessing stage", "Stage type:", types, 0, False)
+        if not ok or not choice:
+            return
+        row = self.stage_list.currentRow()
+        at = row + 1 if row >= 0 else len(self._pipe.stages)
+        stage = make_stage({"type": choice, "enabled": True, "params": {}})
+        self._edit_pipeline(lambda p: p.insert(at, stage))
+        self._populate_stage_list()
+        self.stage_list.setCurrentRow(at)
+
+    def _remove(self) -> None:
+        if self._pipe is None:
+            return
+        row = self.stage_list.currentRow()
+        if row < 0:
+            return
+        self._edit_pipeline(lambda p: p.remove(row))
+        self._populate_stage_list()
 
     def _edit(self) -> None:
         if self._pipe is None:
@@ -251,17 +324,40 @@ class PreprocessingWorkspace(QtWidgets.QWidget):
         stage = self._pipe.stages[row]
         dlg = StageParamDialog(stage, self)
         if dlg.exec_() == QtWidgets.QDialog.Accepted:
-            stage.params.update(dlg.values())
-            stage.prepare(self._pipe.sfreq, self._pipe.ch_kinds)  # redesign filters
-            self._sync_config()
+            values = dlg.values()
+
+            def _apply(p):
+                stage.params.update(values)
+                stage.prepare(p.sfreq, p.ch_kinds, p.ch_names)  # redesign filters
+
+            self._edit_pipeline(_apply)
             self._populate_stage_list()
             self.stage_list.setCurrentRow(row)
+
+    def _calibrate(self) -> None:
+        if self._pipe is None:
+            return
+        QtWidgets.QApplication.setOverrideCursor(QtGui.QCursor(QtCore.Qt.WaitCursor))
+        try:
+            summaries = self._ctl.engine.calibrate_artifacts(seconds=10.0)
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("Artifact calibration failed.")
+            QtWidgets.QMessageBox.critical(self, "Calibration error", str(exc))
+            return
+        finally:
+            QtWidgets.QApplication.restoreOverrideCursor()
+        self._populate_stage_list()
+        QtWidgets.QMessageBox.information(
+            self, "Artifact removal calibrated",
+            "Fitted on the last ~10 s:\n\n  " + "\n  ".join(summaries)
+            + "\n\nVerify the result on the Signal Quality / Spectral tabs "
+              "and with scripts/verify_recording.py.")
 
     def _reset(self) -> None:
         from neurobci.config.schema import default_pipeline
         self._ctl.config.preprocessing.stages = default_pipeline()
-        self._pipe = None  # force rebuild on next refresh
-        self._pipe_key = None
+        self._ctl.engine.rebuild_preprocessing()
+        self._pipe = None  # rebind to the rebuilt engine pipeline on next refresh
 
     def _save_profile(self) -> None:
         from neurobci.config.manager import ConfigManager
@@ -306,7 +402,16 @@ class PreprocessingWorkspace(QtWidgets.QWidget):
         if raw.shape[0] < 2:
             return
         self.before_plot.update_data(raw, info.sfreq)
-        processed = self._pipe.apply_window(raw) if self._pipe else raw
+
+        # In causal mode the "after" view is literally the shared live stream
+        # that downstream tabs consume; offline mode is a zero-phase preview.
+        if self.mode_combo.currentData() == MODE_OFFLINE and self._pipe is not None:
+            with engine.pipeline_lock:
+                processed = self._pipe.apply_window(raw, MODE_OFFLINE)
+        else:
+            processed, _ = engine.latest_processed_seconds(self.window_spin.value())
+            if processed.shape[0] < 2:
+                processed = raw
         self.after_plot.update_data(processed, info.sfreq)
 
         self._update_artifacts(raw, info)

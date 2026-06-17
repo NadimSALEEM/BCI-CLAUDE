@@ -4,9 +4,12 @@ import tempfile
 import time
 import unittest
 
+import numpy as np
+
 from neurobci.acquisition.engine import AcquisitionEngine
 from neurobci.config.schema import AppConfig
 from neurobci.core.app_state import ConnectionStatus, OperatingMode
+from neurobci.preprocessing.stages import make_stage
 from neurobci.recording.exporter import load_session
 
 
@@ -47,6 +50,84 @@ class TestAcquisitionEngine(unittest.TestCase):
 
         self.assertFalse(engine.running)
         self.assertEqual(engine.state.snapshot().mode, OperatingMode.IDLE)
+
+    def test_processed_buffer_is_filled_and_differs_from_raw(self):
+        cfg = AppConfig()
+        cfg.acquisition.source_type = "simulated"
+        cfg.acquisition.buffer_seconds = 5.0
+        engine = AcquisitionEngine(cfg)
+        engine.start()
+        try:
+            self.assertTrue(self._wait_for(
+                lambda: engine.processed_buffer is not None
+                and engine.processed_buffer.total_written > 600
+            ))
+            raw, _ = engine.latest_seconds(1.0)
+            proc, _ = engine.latest_processed_seconds(1.0)
+            # Aligned length, same channel count.
+            self.assertEqual(proc.shape[1], raw.shape[1])
+            self.assertGreater(proc.shape[0], 0)
+            # The default pipeline (high-pass + CAR + ...) must actually change
+            # the signal: processed != raw.
+            n = min(raw.shape[0], proc.shape[0])
+            self.assertFalse(np.allclose(raw[-n:], proc[-n:]))
+            # CAR makes the per-sample EEG mean ~0 in the processed stream.
+            eeg = engine.stream_info.eeg_indices
+            self.assertLess(np.abs(proc[-n:][:, eeg].mean(axis=1)).max(), 1.0)
+        finally:
+            engine.stop()
+        # After stop the processed buffer is released.
+        self.assertIsNone(engine.processed_buffer)
+
+    def test_rebuild_preprocessing_takes_effect_live(self):
+        cfg = AppConfig()
+        cfg.acquisition.source_type = "simulated"
+        engine = AcquisitionEngine(cfg)
+        engine.start()
+        try:
+            self.assertTrue(self._wait_for(
+                lambda: engine.processed_buffer is not None
+                and engine.processed_buffer.total_written > 300))
+            # Replace the pipeline with a single hard clamp and confirm the
+            # live processed stream respects it.
+            with engine.pipeline_lock:
+                engine.pipeline.stages = [
+                    make_stage({"type": "clamp", "params": {"limit_uv": 5.0}})
+                ]
+                engine.pipeline.stages[0].prepare(
+                    engine.pipeline.sfreq, engine.pipeline.ch_kinds,
+                    engine.pipeline.ch_names)
+                engine.pipeline.reset()
+            base = engine.processed_buffer.total_written
+            self.assertTrue(self._wait_for(
+                lambda: engine.processed_buffer.total_written > base + 300))
+            proc, _ = engine.latest_processed_seconds(0.5)
+            self.assertLessEqual(np.abs(proc).max(), 5.0 + 1e-4)
+        finally:
+            engine.stop()
+
+    def test_calibrate_artifacts_fits_pipeline_stages(self):
+        cfg = AppConfig()
+        cfg.acquisition.source_type = "simulated"
+        cfg.preprocessing.stages = [
+            {"type": "highpass", "enabled": True, "params": {"cutoff_hz": 0.5}},
+            {"type": "interpolate_bad", "enabled": True, "params": {}},
+            {"type": "ica", "enabled": True, "params": {"max_remove": 1}},
+        ]
+        engine = AcquisitionEngine(cfg)
+        engine.start()
+        try:
+            self.assertTrue(engine.pipeline.requires_fit)
+            self.assertFalse(engine.pipeline.fitted)
+            self.assertTrue(self._wait_for(
+                lambda: engine.buffer is not None
+                and engine.buffer.total_written > int(2 * cfg.acquisition.expected_sfreq)))
+            summaries = engine.calibrate_artifacts(seconds=3.0)
+            self.assertTrue(any("interpolate_bad" in s for s in summaries))
+            self.assertTrue(any("ica" in s for s in summaries))
+            self.assertTrue(engine.pipeline.fitted)
+        finally:
+            engine.stop()
 
     def test_recording_integration(self):
         with tempfile.TemporaryDirectory() as d:

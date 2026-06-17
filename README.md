@@ -30,10 +30,13 @@ This repository implements the full roadmap **Phase 1 (Core)** … **Phase 9
 | Live signal-quality metrics (explainable, no fake impedance) | ✅ |
 | Crash-safe session recording (raw + timestamps + markers + metadata) | ✅ |
 | Session loader + MNE `.fif` / `.npz` export | ✅ |
-| **Modular preprocessing pipeline (high/low/band-pass, notch, CAR, detrend)** | ✅ |
+| **Modular preprocessing pipeline (filters, notch, band-stop, CAR, robust/Laplacian re-ref, clamp, smoothing, z-score, detrend, Sav–Golay)** | ✅ |
 | **Strict causal-online vs zero-phase-offline separation** | ✅ |
-| **Reorder/enable/edit stages + validation warnings + profiles** | ✅ |
+| **Add/remove/reorder/enable/edit stages + validation warnings + profiles** | ✅ |
+| **One shared live pipeline → preprocessed stream consumed by quality/spectral/raw tabs** | ✅ |
 | Artifact detection (flat/clip/pop/EMG/line/blink/missing) with reasons | ✅ |
+| **Calibrated artifact removal: bad-channel interpolation, ICA, ASR (fit-on-calibration, applied online; pass-through until fitted)** | ✅ |
+| **Data-trust verification (TRUST/CAUTION/UNTRUSTWORTHY) for windows & recordings + `verify_recording.py` CLI** | ✅ |
 | Before/after live visualization | ✅ |
 | **P300 paradigm: epoching, xDAWN/LDA + Riemannian models** | ✅ |
 | **Leakage-free CV (balanced-acc/AUC/κ/MCC) reported vs chance** | ✅ |

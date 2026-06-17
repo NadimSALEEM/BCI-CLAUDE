@@ -7,6 +7,10 @@
 | "No matching LSL stream found" | Headset/stream not running, or name/type mismatch. Use **Scan for LSL streams** and pick from the list; leave the name blank to auto-discover by type. |
 | Channels tab shows red errors | Stream montage/rate ≠ configured montage. Fix the EEG/EOG labels and confirm the sampling rate; errors block calibration on purpose. |
 | Signal Quality shows BAD channels | Flat/railing/noisy electrode. Reseat/clean the electrode; bad channels are excluded from indices and topomaps. |
+| Real EEG is very noisy; one electrode hits ±2000 µV | A railing electrode poisons mean **CAR** (its huge value spreads to every channel). Add an `interpolate_bad` stage **before** `car`, or swap `car` → `robust_ref` (median). Then *Calibrate artifact removal*. |
+| Cognitive indices spike/“go crazy” even after preprocessing | Linear filters don't remove **transient** artifacts (movement, pops, blinks). Add `clamp` (cap spikes), `ica` (remove blink components — needs the EOG channel), and/or `asr` (reconstruct high-variance transients), then calibrate. Remember indices are *exploratory proxies* and are computed excluding BAD channels. |
+| "Is my recording even usable?" | Run `python scripts/verify_recording.py <session_dir> [--preprocess]` for a TRUST/CAUTION/UNTRUSTWORTHY verdict with reasons. |
+| ICA/ASR/`interpolate_bad` "passing through" | They are **calibrated** stages and do nothing until fitted. Click *Calibrate artifact removal* (Preprocessing tab) on a clean stretch, or call `engine.calibrate_artifacts()`. |
 | Calibration says "NOT USABLE" | The best model didn't beat chance — insufficient/contaminated data. Collect more trials, improve signal quality, or raise the synthetic amplitude in simulation. This is intentional honesty, not a bug. |
 | Control demo: nothing happens | Need a **P300** model (Calibration tab) **and** a running stream. If the stream is disconnected or the emergency stop is active, the safety layer blocks commands (shown in history). |
 | Topomap is blank | matplotlib unavailable, or too few channels with known positions/finite values in this window. |

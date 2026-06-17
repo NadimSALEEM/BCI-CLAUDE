@@ -59,13 +59,20 @@ class SpectralWorkspace(QtWidgets.QWidget):
         self.mode_combo.addItems(["absolute", "relative", "baseline"])
         self.index_combo = QtWidgets.QComboBox()
         self.index_combo.addItems(["engagement", "workload", "drowsiness"])
+        self.source_combo = QtWidgets.QComboBox()
+        self.source_combo.addItem("Preprocessed", True)
+        self.source_combo.addItem("Raw", False)
+        self.source_combo.setToolTip(
+            "Run spectral analysis on the shared preprocessing output or on "
+            "the raw stream.")
         self.baseline_btn = QtWidgets.QPushButton("Capture baseline")
         self.baseline_btn.clicked.connect(self._capture_baseline)
         self.clear_btn = QtWidgets.QPushButton("Clear")
         self.clear_btn.clicked.connect(self._clear_baseline)
 
         for label, w in (("Window:", self.window_spin), ("Band:", self.band_combo),
-                         ("Map:", self.mode_combo), ("Track:", self.index_combo)):
+                         ("Map:", self.mode_combo), ("Track:", self.index_combo),
+                         ("Source:", self.source_combo)):
             ctrl.addWidget(QtWidgets.QLabel(label))
             ctrl.addWidget(w)
         ctrl.addStretch(1)
@@ -143,7 +150,10 @@ class SpectralWorkspace(QtWidgets.QWidget):
             return
         self._ensure_analyzer(info)
 
-        data, _ = engine.latest_seconds(self.window_spin.value())
+        if self.source_combo.currentData():
+            data, _ = engine.latest_processed_seconds(self.window_spin.value())
+        else:
+            data, _ = engine.latest_seconds(self.window_spin.value())
         if data.shape[0] < int(info.sfreq):     # need ~1 s minimum
             return
         bad = [c.name for c in compute_quality(data, info).channels

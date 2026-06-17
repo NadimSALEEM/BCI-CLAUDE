@@ -38,19 +38,27 @@ class Pipeline:
         ch_kinds: list[str],
         enabled: bool = True,
         mode: str = MODE_CAUSAL,
+        ch_names: list[str] | None = None,
     ) -> None:
         self.stages = stages
         self.enabled = enabled
         self.mode = mode
         self.sfreq = sfreq
         self.ch_kinds = list(ch_kinds)
+        self.ch_names = list(ch_names) if ch_names else []
         for st in self.stages:
-            st.prepare(sfreq, ch_kinds)
+            st.prepare(sfreq, ch_kinds, self.ch_names)
 
     # ----- construction -------------------------------------------------- #
 
     @classmethod
-    def from_config(cls, pre_config, sfreq: float, ch_kinds: list[str]) -> "Pipeline":
+    def from_config(
+        cls,
+        pre_config,
+        sfreq: float,
+        ch_kinds: list[str],
+        ch_names: list[str] | None = None,
+    ) -> "Pipeline":
         stages = [make_stage(s) for s in pre_config.stages]
         return cls(
             stages=stages,
@@ -58,6 +66,7 @@ class Pipeline:
             ch_kinds=ch_kinds,
             enabled=pre_config.enabled,
             mode=pre_config.mode,
+            ch_names=ch_names,
         )
 
     def to_config_stages(self) -> list[dict]:
@@ -88,6 +97,45 @@ class Pipeline:
         for st in self.stages:
             st.reset()
 
+    # ----- calibration (fit-requiring stages: ICA / ASR / bad channels) --- #
+
+    @property
+    def requires_fit(self) -> bool:
+        """True if any enabled stage needs calibration before it does anything."""
+        return any(st.enabled and st.requires_fit for st in self.stages)
+
+    @property
+    def fitted(self) -> bool:
+        """True if every enabled fit-requiring stage has been calibrated."""
+        return all(
+            st.fitted for st in self.stages if st.enabled and st.requires_fit
+        )
+
+    def fit(self, data: np.ndarray) -> list[str]:
+        """Calibrate every fit-requiring stage on a window of raw samples.
+
+        Each fit-requiring stage is fit on the signal *as it reaches it* --
+        i.e. earlier stages are applied (causally) first -- so e.g. ICA is
+        calibrated on filtered data, exactly as it will run online. Returns a
+        per-stage summary of what was learned.
+        """
+        x = np.asarray(data, dtype=np.float64)
+        summaries: list[str] = []
+        for st in self.stages:
+            if not st.enabled:
+                continue
+            if not st.realtime_safe:          # offline-only stage: skip in this chain
+                continue
+            if st.requires_fit:
+                try:
+                    st.fit(x)
+                    summaries.append(f"{st.type_name}: {st.fit_summary or 'fitted'}")
+                except Exception as exc:       # noqa: BLE001 - report, do not crash
+                    logger.exception("Stage %s fit failed.", st.type_name)
+                    summaries.append(f"{st.type_name}: FIT FAILED ({exc})")
+            x = st.apply(x)
+        return summaries
+
     def process_chunk(self, data: np.ndarray) -> np.ndarray:
         """Real-time path: stateful, causal, never uses future samples."""
         if not self.enabled:
@@ -117,6 +165,16 @@ class Pipeline:
     def set_enabled(self, index: int, enabled: bool) -> None:
         if 0 <= index < len(self.stages):
             self.stages[index].enabled = enabled
+
+    def insert(self, index: int, stage: ProcessingStage) -> None:
+        """Insert an already-built stage, preparing it for this stream."""
+        stage.prepare(self.sfreq, self.ch_kinds, self.ch_names)
+        index = max(0, min(index, len(self.stages)))
+        self.stages.insert(index, stage)
+
+    def remove(self, index: int) -> None:
+        if 0 <= index < len(self.stages):
+            self.stages.pop(index)
 
     # ----- introspection ------------------------------------------------- #
 

@@ -187,6 +187,9 @@ class MainWindow(QtWidgets.QMainWindow):
         info = self.engine.stream_info
         if info is None or self.engine.buffer is None:
             return None
+        # Deliberately on the RAW stream: this rating gates command execution
+        # (safety), and a notch/CAR/clamp stage in the pipeline could mask a
+        # genuine electrode fault. Per-tab views can opt into preprocessed.
         data, _ = self.engine.latest_seconds(2.0)
         report = compute_quality(data, info)
         return report.overall_rating if report.channels else None

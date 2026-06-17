@@ -1,5 +1,6 @@
 """Configurable online/offline preprocessing and artifact detection."""
 
+from neurobci.preprocessing.artifact_removal import ASR, ICARemoval, InterpolateBad
 from neurobci.preprocessing.artifacts import (
     ArtifactEvent,
     ArtifactReport,
@@ -9,13 +10,20 @@ from neurobci.preprocessing.artifacts import (
 from neurobci.preprocessing.pipeline import MODE_CAUSAL, MODE_OFFLINE, Pipeline
 from neurobci.preprocessing.stages import (
     STAGE_REGISTRY,
+    AmplitudeClamp,
     BandPass,
+    BandStop,
     CommonAverageReference,
     Detrend,
     HighPass,
+    Laplacian,
     LowPass,
+    MovingAverage,
     Notch,
     ProcessingStage,
+    RobustReference,
+    SavitzkyGolay,
+    Standardize,
     make_stage,
 )
 
@@ -29,9 +37,19 @@ __all__ = [
     "HighPass",
     "LowPass",
     "BandPass",
+    "BandStop",
     "Notch",
     "CommonAverageReference",
+    "RobustReference",
+    "Laplacian",
+    "AmplitudeClamp",
+    "MovingAverage",
+    "Standardize",
     "Detrend",
+    "SavitzkyGolay",
+    "InterpolateBad",
+    "ICARemoval",
+    "ASR",
     "detect_artifacts",
     "ArtifactReport",
     "ArtifactEvent",

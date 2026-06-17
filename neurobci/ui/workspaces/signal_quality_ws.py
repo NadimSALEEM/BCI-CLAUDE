@@ -37,9 +37,21 @@ class SignalQualityWorkspace(QtWidgets.QWidget):
     def _build(self) -> None:
         root = QtWidgets.QVBoxLayout(self)
 
+        top = QtWidgets.QHBoxLayout()
         self.summary = QtWidgets.QLabel("No data.")
         self.summary.setStyleSheet("font-weight:600; padding:4px;")
-        root.addWidget(self.summary)
+        top.addWidget(self.summary, stretch=1)
+        top.addWidget(QtWidgets.QLabel("Source:"))
+        self.source_combo = QtWidgets.QComboBox()
+        self.source_combo.addItem("Preprocessed", True)
+        self.source_combo.addItem("Raw", False)
+        self.source_combo.setToolTip(
+            "Compute quality on the shared preprocessing output (what the BCI "
+            "sees) or on the raw stream. Note: a notch/CAR stage will mask the "
+            "very line-noise/common artefacts these metrics look for, so use "
+            "'Raw' to judge electrode contact.")
+        top.addWidget(self.source_combo)
+        root.addLayout(top)
 
         self.table = QtWidgets.QTableWidget(0, len(_COLUMNS))
         self.table.setHorizontalHeaderLabels(_COLUMNS)
@@ -67,16 +79,20 @@ class SignalQualityWorkspace(QtWidgets.QWidget):
             self.table.setRowCount(0)
             return
 
-        data, _ = engine.latest_seconds(2.0)
+        if self.source_combo.currentData():
+            data, _ = engine.latest_processed_seconds(2.0)
+        else:
+            data, _ = engine.latest_seconds(2.0)
         report = compute_quality(data, info, self._thresholds)
         if not report.channels:
             self.summary.setText("Acquiring… (need ≥ a few samples)")
             return
 
+        src = "preprocessed" if self.source_combo.currentData() else "raw"
         self.summary.setText(
             f"Overall: {report.overall_rating.value.upper()}    "
             f"Bad channels: {report.n_bad_channels} / {len(report.channels)}    "
-            f"Window: {report.n_samples} samples @ {report.sfreq:.0f} Hz"
+            f"Window: {report.n_samples} samples @ {report.sfreq:.0f} Hz ({src})"
         )
 
         self.table.setRowCount(len(report.channels))
