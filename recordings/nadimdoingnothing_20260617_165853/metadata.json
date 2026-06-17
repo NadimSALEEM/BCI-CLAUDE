@@ -1,0 +1,208 @@
+{
+  "format_version": 1,
+  "software_version": "0.1.0",
+  "created_utc": "2026-06-17T15:00:25.903587+00:00",
+  "participant_id": "nadimdoingnothing",
+  "notes": "",
+  "stream_name": "ENOBIO20-EEG",
+  "source_kind": "lsl",
+  "units": "uV",
+  "sfreq_nominal": 500.0,
+  "n_channels": 20,
+  "channel_names": [
+    "P7",
+    "P4",
+    "Cz",
+    "Pz",
+    "P3",
+    "P8",
+    "O1",
+    "O2",
+    "T8",
+    "F8",
+    "C4",
+    "F4",
+    "Fp2",
+    "Fz",
+    "C3",
+    "F3",
+    "Fp1",
+    "T7",
+    "F7",
+    "EOG"
+  ],
+  "channel_kinds": [
+    "eeg",
+    "eeg",
+    "eeg",
+    "eeg",
+    "eeg",
+    "eeg",
+    "eeg",
+    "eeg",
+    "eeg",
+    "eeg",
+    "eeg",
+    "eeg",
+    "eeg",
+    "eeg",
+    "eeg",
+    "eeg",
+    "eeg",
+    "eeg",
+    "eeg",
+    "eog"
+  ],
+  "dtype": "float32",
+  "files": {
+    "eeg": "eeg.f32",
+    "timestamps": "timestamps.f64",
+    "markers": "markers.jsonl"
+  },
+  "config": {
+    "schema_version": 1,
+    "profile_name": "default",
+    "paradigm": "none",
+    "channels": {
+      "montage_name": "enobio19",
+      "eeg_channels": [
+        "P7",
+        "P4",
+        "Cz",
+        "Pz",
+        "P3",
+        "P8",
+        "O1",
+        "O2",
+        "T8",
+        "F8",
+        "C4",
+        "F4",
+        "Fp2",
+        "Fz",
+        "C3",
+        "F3",
+        "Fp1",
+        "T7",
+        "F7"
+      ],
+      "eog_channels": [
+        "EOG"
+      ]
+    },
+    "acquisition": {
+      "source_type": "lsl",
+      "lsl_stream_name": "ENOBIO20-EEG",
+      "lsl_stream_type": "EEG",
+      "expected_sfreq": 500.0,
+      "buffer_seconds": 30.0,
+      "pull_interval_s": 0.02,
+      "sfreq_tolerance": 0.05
+    },
+    "simulation": {
+      "seed": 1234,
+      "alpha_amp_uv": 12.0,
+      "theta_amp_uv": 6.0,
+      "beta_amp_uv": 4.0,
+      "pink_noise_uv": 8.0,
+      "white_noise_uv": 3.0,
+      "line_noise_uv": 2.0,
+      "line_freq_hz": 50.0,
+      "drift_uv": 5.0,
+      "blink_rate_hz": 0.3,
+      "blink_amp_uv": 90.0,
+      "flat_channels": [],
+      "noisy_channels": []
+    },
+    "preprocessing": {
+      "enabled": true,
+      "mode": "causal",
+      "stages": [
+        {
+          "type": "highpass",
+          "enabled": true,
+          "params": {
+            "cutoff_hz": 0.5,
+            "order": 4
+          }
+        },
+        {
+          "type": "lowpass",
+          "enabled": true,
+          "params": {
+            "cutoff_hz": 40.0,
+            "order": 4
+          }
+        },
+        {
+          "type": "car",
+          "enabled": false,
+          "params": {}
+        },
+        {
+          "type": "notch",
+          "enabled": true,
+          "params": {
+            "freq_hz": 50.0,
+            "quality": 30.0
+          }
+        }
+      ]
+    },
+    "control": {
+      "n_items": 6,
+      "test_mode": false,
+      "selection": {
+        "min_repetitions": 3,
+        "max_repetitions": 15,
+        "confidence_margin": 0.12,
+        "min_confidence": 0.5,
+        "timeout_s": 12.0
+      },
+      "decision": {
+        "confidence_threshold": 0.6,
+        "vote_window": 5,
+        "min_agree": 3,
+        "refractory_s": 1.0,
+        "neutral_label": "none"
+      },
+      "safety": {
+        "external_control_enabled": false,
+        "min_confidence": 0.5,
+        "max_commands_per_min": 60.0,
+        "require_connected": true,
+        "require_quality": true
+      }
+    },
+    "spectral": {
+      "window_s": 4.0,
+      "nperseg_s": 1.0,
+      "fmax_hz": 45.0,
+      "show_indices": true
+    },
+    "recording": {
+      "directory": "recordings",
+      "participant_id": "anon",
+      "notes": ""
+    },
+    "ui": {
+      "raw_window_s": 10.0,
+      "refresh_hz": 30.0,
+      "default_scale_uv": 75.0,
+      "theme": "dark",
+      "basic_mode": true
+    },
+    "logging": {
+      "level": "INFO",
+      "to_file": true,
+      "directory": "logs"
+    }
+  },
+  "finalised": true,
+  "ended_utc": "2026-06-17T15:00:25.903713+00:00",
+  "n_samples": 46405,
+  "n_markers": 0,
+  "duration_s": 92.81,
+  "first_timestamp": 107582.1354259,
+  "last_timestamp": 107674.9434259
+}
