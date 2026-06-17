@@ -1,0 +1,17 @@
+# NeuroBCI runtime dependencies.
+# Versions below are the ones validated on the development machine
+# (Python 3.14). Looser pins are used so the platform keeps working
+# with newer point releases; tighten for a frozen deployment.
+
+numpy>=2.0
+scipy>=1.13
+scikit-learn>=1.5
+mne>=1.7
+pyriemann>=0.6
+pylsl>=1.16          # requires the native liblsl library at runtime
+PyQt5>=5.15
+pyqtgraph>=0.13
+matplotlib>=3.8
+
+# Optional / development only:
+# pytest>=8.0        # tests also run under the stdlib unittest runner

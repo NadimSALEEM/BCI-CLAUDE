@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+
+# Project runtime artifacts
+logs/
+*.log
+recordings/
+models/
+
+# Keep configs/ but ignore scratch profiles if desired:
+# configs/scratch_*.json
+
+# Tooling
+.pytest_cache/
+.venv/
+venv/
+.vscode/
+.idea/
