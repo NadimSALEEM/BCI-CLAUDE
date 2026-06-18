@@ -15,7 +15,8 @@ import numpy as np
 
 from neurobci.acquisition.base import EEGSource
 from neurobci.config.schema import AcquisitionConfig, ChannelConfig
-from neurobci.core.stream_info import KIND_EEG, KIND_EOG, KIND_MISC, StreamInfo
+from neurobci.core.electrodes import classify_channel
+from neurobci.core.stream_info import KIND_EOG, StreamInfo
 
 logger = logging.getLogger(__name__)
 
@@ -130,15 +131,14 @@ class LSLSource(EEGSource):
             names = (cfg_names + [f"ch{i}" for i in range(n)])[:n]
             types = [""] * n
 
+        # Auto-detect each channel's kind from its name + declared type, but
+        # let the configured montage's explicit EOG list win (manual override).
         eog_set = {c.lower() for c in self._channels.eog_channels}
-        kinds = []
-        for label, ctype in zip(names, types):
-            if "eog" in ctype or label.lower() in eog_set:
-                kinds.append(KIND_EOG)
-            elif ctype in ("eeg", ""):
-                kinds.append(KIND_EEG)
-            else:
-                kinds.append(KIND_MISC)
+        kinds = [
+            KIND_EOG if label.lower() in eog_set
+            else classify_channel(label, ctype)
+            for label, ctype in zip(names, types)
+        ]
         return names, kinds
 
     def _empty(self) -> tuple[np.ndarray, np.ndarray]:

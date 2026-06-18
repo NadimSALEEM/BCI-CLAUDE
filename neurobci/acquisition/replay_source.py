@@ -20,7 +20,8 @@ import numpy as np
 
 from neurobci.acquisition.base import EEGSource
 from neurobci.core.stream_info import StreamInfo
-from neurobci.recording.exporter import LoadedSession, load_session
+from neurobci.recording.exporter import LoadedSession
+from neurobci.recording.external import load_session_any
 
 
 class ReplaySource(EEGSource):
@@ -33,7 +34,7 @@ class ReplaySource(EEGSource):
         block_s: float = 0.05,
     ) -> None:
         if not isinstance(session, LoadedSession):
-            session = load_session(session)
+            session = load_session_any(session)
         self._session = session
         self._data = np.ascontiguousarray(session.data, dtype=np.float32)
         self._sfreq = float(session.sfreq)

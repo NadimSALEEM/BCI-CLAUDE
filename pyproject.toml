@@ -16,6 +16,7 @@ dependencies = [
     "mne>=1.7",
     "pyriemann>=0.6",
     "pylsl>=1.16",
+    "pyxdf>=1.16",
     "PyQt5>=5.15",
     "pyqtgraph>=0.13",
     "matplotlib>=3.8",

@@ -59,6 +59,7 @@ class SpectralWorkspace(QtWidgets.QWidget):
         self.mode_combo.addItems(["absolute", "relative", "baseline"])
         self.index_combo = QtWidgets.QComboBox()
         self.index_combo.addItems(["engagement", "workload", "drowsiness"])
+        self.index_combo.currentIndexChanged.connect(self._on_track_changed)
         self.source_combo = QtWidgets.QComboBox()
         self.source_combo.addItem("Preprocessed", True)
         self.source_combo.addItem("Raw", False)
@@ -92,7 +93,7 @@ class SpectralWorkspace(QtWidgets.QWidget):
         self.psd_plot.setLabel("left", "PSD (uV^2/Hz)")
         self.psd_curve = self.psd_plot.plot(pen=pg.mkPen("#3a9bd0", width=1))
         ll.addWidget(self.psd_plot)
-        self.temporal_plot = pg.PlotWidget(title="Index over time")
+        self.temporal_plot = pg.PlotWidget(title="Index over time — engagement")
         self.temporal_plot.setLabel("bottom", "Time", units="s")
         self.temporal_curve = self.temporal_plot.plot(pen=pg.mkPen("#ffd070", width=1))
         ll.addWidget(self.temporal_plot)
@@ -128,6 +129,14 @@ class SpectralWorkspace(QtWidgets.QWidget):
         self._analyzer = SpectralAnalyzer(info, self._ctl.config.spectral)
         self._info_key = list(info.channel_names)
         self._pos, self._found = channel_positions_2d(info.channel_names)
+
+    def _on_track_changed(self) -> None:
+        """Reinitialise the temporal trace when the tracked index changes."""
+        key = self.index_combo.currentText()
+        if self._analyzer is not None:
+            self._analyzer.reset_history()
+        self.temporal_curve.setData([], [])
+        self.temporal_plot.setTitle(f"Index over time — {key}")
 
     def _capture_baseline(self) -> None:
         if self._analyzer is not None and getattr(self, "_last_report", None) is not None:
@@ -179,14 +188,22 @@ class SpectralWorkspace(QtWidgets.QWidget):
         band = self.band_combo.currentText()
         mode = self.mode_combo.currentData() or self.mode_combo.currentText()
         vals = self._analyzer.topomap_values(report, band, mode)
-        gx, gy, gz = interpolate_topomap(vals, self._pos, self._found, res=48)
+        gx, gy, gz = interpolate_topomap(vals, self._pos, self._found, res=120)
         self.ax.clear()
         self.ax.set_facecolor("#14181c")
         if np.isfinite(gz).any():
             cmap = "RdBu_r" if mode == "baseline" else "viridis"
-            self.ax.contourf(gx, gy, gz, levels=14, cmap=cmap)
-        self.ax.add_artist(Circle((0, 0), 1.0, fill=False, color="#aaaaaa", lw=1.2))
-        self.ax.plot([-0.12, 0, 0.12], [1.0, 1.13, 1.0], color="#aaaaaa", lw=1.2)
+            # Bilinear-interpolated image gives a continuous, facet-free map;
+            # clip it to the head circle so the square grid never shows.
+            im = self.ax.imshow(
+                np.ma.masked_invalid(gz), origin="lower",
+                extent=(gx.min(), gx.max(), gy.min(), gy.max()),
+                cmap=cmap, interpolation="bilinear", aspect="equal", zorder=1)
+            im.set_clip_path(Circle((0, 0), 1.0, transform=self.ax.transData))
+        self.ax.add_artist(Circle((0, 0), 1.0, fill=False, color="#aaaaaa", lw=1.2,
+                                  zorder=2))
+        self.ax.plot([-0.12, 0, 0.12], [1.0, 1.13, 1.0], color="#aaaaaa", lw=1.2,
+                     zorder=2)
         m = self._found
         self.ax.scatter(self._pos[m, 0], self._pos[m, 1], c="#dddddd", s=10, zorder=3)
         self.ax.set_xlim(-1.25, 1.25)

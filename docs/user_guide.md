@@ -17,9 +17,9 @@ sample rate, signal quality, recording state, current prediction and the
 | Tab | Use |
 |-----|-----|
 | Connection / Acquisition | choose source (Simulated / Live LSL), scan & start |
-| Channels | validate montage/rate, correct EEG/EOG labels |
+| Channels | rename channels to real 10-20 labels (or apply a montage preset), validate montage/rate, correct EEG/EOG kinds |
 | Raw EEG | stacked traces (EOG in amber) |
-| Preprocessing | edit the causal/offline pipeline, before/after, artifacts |
+| Preprocessing | edit the causal/offline pipeline, before/after, artifacts + eye-blinks |
 | Signal Quality | per-channel explainable quality |
 | Spectral / State | PSD, band-power topomap, cognitive-state indices, baseline |
 | Calibration | pick a paradigm, run simulated calibration, compare, save |

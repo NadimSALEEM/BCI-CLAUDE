@@ -37,6 +37,27 @@ class TestTopo(unittest.TestCase):
         self.assertTrue(np.isnan(gz[0, 0]))
         self.assertTrue(np.isfinite(gz[20, 20]))
 
+    def test_smoothing_reduces_local_variation(self):
+        info = _info()
+        pos, found = channel_positions_2d(info.channel_names)
+        values = np.arange(info.n_channels, dtype=float)
+        _, _, smooth = interpolate_topomap(values, pos, found, res=60)
+        _, _, sharp = interpolate_topomap(values, pos, found, res=60,
+                                          smooth_sigma=0.0)
+        # Smoothing lowers the typical cell-to-cell gradient inside the disc.
+        def mean_grad(g):
+            d = np.abs(np.diff(g, axis=0))
+            return float(np.nanmean(d))
+        self.assertLess(mean_grad(smooth), mean_grad(sharp))
+
+    def test_extended_positions_resolve(self):
+        # Real 10-10 labels (not in the curated table) resolve via MNE.
+        pos, found = channel_positions_2d(["Oz", "POz", "FCz", "CP3", "Nope1"])
+        self.assertTrue(found[:4].all(), "standard names should have positions")
+        self.assertFalse(found[4])
+        r = np.hypot(pos[found][:, 0], pos[found][:, 1])
+        self.assertTrue(np.all(r <= 1.01))
+
 
 class TestAnalyzer(unittest.TestCase):
     def _data(self, n=2000, seed=0):
@@ -83,6 +104,19 @@ class TestAnalyzer(unittest.TestCase):
             an.analyze(data)
         t, v = an.history_series("indices", "engagement")
         self.assertEqual(len(t), 3)
+
+    def test_reset_history_clears_and_rezeros(self):
+        data, info = self._data()
+        an = SpectralAnalyzer(info, SpectralConfig())
+        for _ in range(3):
+            an.analyze(data)
+        an.reset_history()
+        t, _ = an.history_series("indices", "engagement")
+        self.assertEqual(len(t), 0)
+        an.analyze(data)              # trace restarts near t=0
+        t2, _ = an.history_series("indices", "engagement")
+        self.assertEqual(len(t2), 1)
+        self.assertLess(t2[0], 1.0)
 
 
 if __name__ == "__main__":

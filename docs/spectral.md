@@ -51,16 +51,26 @@ ratios don't have.
 
 ## Topographic maps (`neurobci.spectral.topo`)
 
-A standard normalised 10-20 layout (`POS_1020`) gives 2-D scalp positions;
-`interpolate_topomap` interpolates a per-channel value vector onto the head
-disc (NaN outside, bad/position-less channels excluded). The **Spectral /
-State** GUI tab renders this with matplotlib (head outline + nose + sensor
+A curated normalised 10-20 layout (`POS_1020`) gives 2-D scalp positions,
+extended on demand from MNE's `standard_1020` montage (rescaled to match and
+clamped to the head disc) so any real electrode name — `Oz`, `POz`, `FCz`,
+`CP3`, … — resolves. `interpolate_topomap` interpolates a per-channel value
+vector onto the head disc (NaN outside, bad/position-less channels excluded)
+and applies a light Gaussian blur for a smooth, facet-free field. The
+**Spectral / State** GUI tab renders this with matplotlib as a bilinearly
+interpolated image clipped to the head circle (head outline + nose + sensor
 markers) for a selected band and map mode (absolute / relative / baseline).
+
+> Channels arriving as generic `Ch1`/`eeg1` names won't have positions — use
+> the **Channels** tab to rename them to real 10-20 labels (or apply a
+> montage preset); the topomap then updates automatically.
 
 ## GUI (Spectral / State tab)
 
 PSD curve (mean over good EEG, log scale) · band-power **topomap** · a
-**temporal** trace of a chosen index · a panel listing every index with its
-value, formula, channels and raw components · **Capture baseline** / Clear ·
-the caveat shown at all times. Requires a running stream; heavy work is
-throttled to ~3 Hz so it never affects acquisition.
+**temporal** trace of a chosen index (the *Track* selector — changing it
+reinitialises the "index over time" plot so the new index starts from a clean
+time axis) · a panel listing every index with its value, formula, channels
+and raw components · **Capture baseline** / Clear · the caveat shown at all
+times. Requires a running stream; heavy work is throttled to ~3 Hz so it
+never affects acquisition.

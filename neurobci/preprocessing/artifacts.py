@@ -15,7 +15,8 @@ from enum import Enum
 import numpy as np
 from scipy import signal
 
-from neurobci.core.stream_info import KIND_EOG, StreamInfo
+from neurobci.core.electrodes import is_frontal
+from neurobci.core.stream_info import KIND_EEG, KIND_EOG, StreamInfo
 
 
 class Severity(str, Enum):
@@ -66,9 +67,14 @@ class ArtifactReport:
     @property
     def n_blinks(self) -> int:
         for e in self.events:
-            if e.kind == "blinks":
+            if e.kind == "blinks" and e.scope == "global":
                 return int(e.value)
-        return 0
+        return sum(int(e.value) for e in self.events if e.kind == "blinks")
+
+    @property
+    def blink_events(self) -> list[ArtifactEvent]:
+        """Eye-blink detections (per-channel counts and the global total)."""
+        return [e for e in self.events if e.kind == "blinks"]
 
     def for_channel(self, name: str) -> list[ArtifactEvent]:
         return [e for e in self.events if e.channel == name]
@@ -109,7 +115,12 @@ def detect_artifacts(
             "global", "missing_samples", Severity.WARN, n_nan,
             f"{n_nan} non-finite samples in window."))
 
+    # Remove each channel's DC offset before amplitude/rail/blink checks: a
+    # large baseline (common in unfiltered recordings — electrode half-cell
+    # potentials of hundreds/thousands of uV) is not an artifact, and without
+    # this every channel would falsely trip the clipping/amplitude limits.
     clean = np.nan_to_num(data)
+    clean = clean - clean.mean(axis=0, keepdims=True)
     nperseg = int(min(n, max(64, info.sfreq)))
     freqs, psd = signal.welch(clean, fs=info.sfreq, nperseg=nperseg, axis=0)
 
@@ -152,13 +163,31 @@ def detect_artifacts(
                 "channel", "line_noise", Severity.WARN, line,
                 f"line noise ({line*100:.0f}%)", name))
 
-    # Eye-blinks from EOG channels -> global informational count.
-    blink_total = 0
-    for ci in info.eog_indices:
-        blink_total += _count_blinks(clean[:, ci], th.blink_uv)
-    if info.eog_indices:
+    # Eye-blinks: count per source channel, then a global total. Prefer the
+    # dedicated EOG channel(s); when a montage has none, fall back to frontal
+    # scalp electrodes (Fp/AF/F…) where blinks project most strongly, so the
+    # detector still works on EOG-less caps.
+    blink_idx = list(info.eog_indices)
+    source = "EOG"
+    if not blink_idx:
+        blink_idx = [i for i in range(info.n_channels)
+                     if info.channel_kinds[i] == KIND_EEG
+                     and is_frontal(info.channel_names[i])]
+        source = "frontal EEG"
+
+    if blink_idx:
+        blink_total = 0
+        for ci in blink_idx:
+            c = _count_blinks(clean[:, ci], th.blink_uv)
+            blink_total += c
+            if c:
+                report.events.append(ArtifactEvent(
+                    "channel", "blinks", Severity.INFO, c,
+                    f"{c} blink(s) (|x| > {th.blink_uv:.0f} uV)",
+                    info.channel_names[ci]))
+        suffix = "" if source == "EOG" else " (no EOG channel; frontal EEG)"
         report.events.append(ArtifactEvent(
             "global", "blinks", Severity.INFO, blink_total,
-            f"{blink_total} eye-blink(s) detected on EOG."))
+            f"{blink_total} eye-blink(s) on {source}{suffix}."))
 
     return report

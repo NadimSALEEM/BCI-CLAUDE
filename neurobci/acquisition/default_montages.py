@@ -4,53 +4,29 @@ Knows how to turn a :class:`~neurobci.config.schema.ChannelConfig` into a
 :class:`~neurobci.core.stream_info.StreamInfo`, and provides coarse scalp
 "region" weights used by the simulator to place rhythms and artifacts
 realistically (alpha posterior, blinks frontal, etc.).
+
+The electrode-name primitives (:func:`region_of`, :func:`hemisphere_of`,
+:func:`classify_channel`) live in :mod:`neurobci.core.electrodes` and are
+re-exported here for backward compatibility.
 """
 
 from __future__ import annotations
 
 from neurobci.config.schema import ChannelConfig
+from neurobci.core.electrodes import (  # noqa: F401  (re-exported)
+    REGION_CENTRAL,
+    REGION_FRONTAL,
+    REGION_OCCIPITAL,
+    REGION_OTHER,
+    REGION_PARIETAL,
+    REGION_TEMPORAL,
+    classify_channel,
+    classify_channels,
+    hemisphere_of,
+    is_frontal,
+    region_of,
+)
 from neurobci.core.stream_info import KIND_EEG, KIND_EOG, StreamInfo
-
-# Scalp regions inferred from 10-20 electrode prefixes.
-REGION_FRONTAL = "frontal"
-REGION_CENTRAL = "central"
-REGION_PARIETAL = "parietal"
-REGION_OCCIPITAL = "occipital"
-REGION_TEMPORAL = "temporal"
-REGION_OTHER = "other"
-
-
-def hemisphere_of(channel: str) -> str:
-    """Return 'L', 'R' or 'M' (midline) from a 10-20 name.
-
-    In the 10-20 system odd-numbered electrodes are on the left, even on the
-    right, and 'z' electrodes are midline.
-    """
-    name = channel.upper()
-    for ch in reversed(name):
-        if ch.isdigit():
-            return "L" if int(ch) % 2 == 1 else "R"
-        if ch == "Z":
-            return "M"
-    return "M"
-
-
-def region_of(channel: str) -> str:
-    """Classify a 10-20 channel name into a coarse scalp region."""
-
-    name = channel.upper()
-    if name.startswith(("FP", "AF", "F")):
-        # Temporal F7/F8 are frontotemporal; keep them frontal for weights.
-        return REGION_FRONTAL
-    if name.startswith("C"):
-        return REGION_CENTRAL
-    if name.startswith("P"):
-        return REGION_PARIETAL
-    if name.startswith("O"):
-        return REGION_OCCIPITAL
-    if name.startswith("T"):
-        return REGION_TEMPORAL
-    return REGION_OTHER
 
 
 def build_stream_info(
@@ -70,6 +46,28 @@ def build_stream_info(
         source_kind=source_kind,
         units="uV",
     )
+
+
+# Standard montage name presets, used to relabel a stream whose channels
+# arrive as generic "Ch1.."/"eeg1.." into real 10-20 positions. Order matches
+# the usual acquisition order for each cap.
+MONTAGE_PRESETS: dict[str, list[str]] = {
+    "10-20 (19 EEG)": [
+        "Fp1", "Fp2", "F7", "F3", "Fz", "F4", "F8", "T7", "C3", "Cz",
+        "C4", "T8", "P7", "P3", "Pz", "P4", "P8", "O1", "O2",
+    ],
+    "Enobio 20 (19 EEG + EOG)": [
+        "P7", "P4", "Cz", "Pz", "P3", "P8", "O1", "O2", "T8", "F8", "C4",
+        "F4", "Fp2", "Fz", "C3", "F3", "Fp1", "T7", "F7", "EOG",
+    ],
+    "10-10 (32 EEG)": [
+        "Fp1", "Fp2", "AF3", "AF4", "F7", "F3", "Fz", "F4", "F8",
+        "FC5", "FC1", "FC2", "FC6", "T7", "C3", "Cz", "C4", "T8",
+        "CP5", "CP1", "CP2", "CP6", "P7", "P3", "Pz", "P4", "P8",
+        "PO3", "PO4", "O1", "Oz", "O2",
+    ],
+    "Midline (Fz Cz Pz Oz)": ["Fz", "Cz", "Pz", "Oz"],
+}
 
 
 # Relative alpha (~10 Hz) strength by region: strongest posterior.

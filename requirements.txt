@@ -9,6 +9,7 @@ scikit-learn>=1.5
 mne>=1.7
 pyriemann>=0.6
 pylsl>=1.16          # requires the native liblsl library at runtime
+pyxdf>=1.16          # read .xdf recordings (LabRecorder / LSL) for replay
 PyQt5>=5.15
 pyqtgraph>=0.13
 matplotlib>=3.8

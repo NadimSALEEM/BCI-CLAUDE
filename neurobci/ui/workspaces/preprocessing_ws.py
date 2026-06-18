@@ -180,11 +180,24 @@ class PreprocessingWorkspace(QtWidgets.QWidget):
         split.setSizes([320, 760])
         root.addWidget(split, stretch=1)
 
-        # --- artifacts --------------------------------------------------- #
-        root.addWidget(QtWidgets.QLabel("Detected artifacts (raw, last window):"))
+        # --- detections: artifacts (left) | eye-blinks (right) ----------- #
+        det = QtWidgets.QHBoxLayout()
+
+        art_col = QtWidgets.QVBoxLayout()
+        art_col.addWidget(QtWidgets.QLabel("Detected artifacts (raw, last window):"))
         self.artifacts = QtWidgets.QListWidget()
         self.artifacts.setMaximumHeight(120)
-        root.addWidget(self.artifacts)
+        art_col.addWidget(self.artifacts)
+        det.addLayout(art_col, stretch=2)
+
+        blink_col = QtWidgets.QVBoxLayout()
+        blink_col.addWidget(QtWidgets.QLabel("Eye-blink detection (raw, last window):"))
+        self.blinks = QtWidgets.QListWidget()
+        self.blinks.setMaximumHeight(120)
+        blink_col.addWidget(self.blinks)
+        det.addLayout(blink_col, stretch=1)
+
+        root.addLayout(det)
 
     # ----- pipeline lifecycle ------------------------------------------- #
 
@@ -419,12 +432,25 @@ class PreprocessingWorkspace(QtWidgets.QWidget):
     def _update_artifacts(self, raw, info) -> None:
         report = detect_artifacts(raw, info)
         self.artifacts.clear()
+        self.blinks.clear()
         sev_color = {
             Severity.REJECT: "❌", Severity.WARN: "⚠", Severity.INFO: "ℹ",
         }
+        # Eye-blinks get their own panel; everything else is an artifact.
         for e in report.events:
+            if e.kind == "blinks":
+                continue
             tag = sev_color.get(e.severity, "")
             where = e.channel or "global"
             self.artifacts.addItem(f"{tag} [{where}] {e.message}")
         if self.artifacts.count() == 0:
             self.artifacts.addItem("No artifacts detected.")
+
+        for e in report.blink_events:
+            where = e.channel or "total"
+            self.blinks.addItem(f"👁 [{where}] {e.message}")
+        if self.blinks.count() == 0:
+            has_eog = bool(info.eog_indices)
+            self.blinks.addItem(
+                "No eye-blinks detected." if has_eog
+                else "No EOG / frontal channels to detect blinks.")

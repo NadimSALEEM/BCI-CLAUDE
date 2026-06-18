@@ -17,7 +17,7 @@ from neurobci.acquisition.artifacts_inject import (
     ArtifactInjector,
 )
 from neurobci.acquisition.replay_source import ReplaySource
-from neurobci.recording.exporter import load_session
+from neurobci.recording.external import load_session_any
 
 logger = logging.getLogger(__name__)
 
@@ -38,9 +38,12 @@ class ReplayWorkspace(QtWidgets.QWidget):
         sel = QtWidgets.QHBoxLayout()
         self.browse_btn = QtWidgets.QPushButton("Load session…")
         self.browse_btn.clicked.connect(self._browse)
+        self.browse_file_btn = QtWidgets.QPushButton("Load file (XDF/FIF)…")
+        self.browse_file_btn.clicked.connect(self._browse_file)
         self.path_label = QtWidgets.QLabel("No session loaded.")
         self.path_label.setWordWrap(True)
         sel.addWidget(self.browse_btn)
+        sel.addWidget(self.browse_file_btn)
         sel.addWidget(self.path_label, stretch=1)
         root.addLayout(sel)
         self.meta_label = QtWidgets.QLabel("")
@@ -115,11 +118,16 @@ class ReplayWorkspace(QtWidgets.QWidget):
         self._session_path = path
         self.path_label.setText(path)
         try:
-            s = load_session(path)
+            s = load_session_any(path)
+            origin = s.meta.get("imported_from", "native")
+            who = s.meta.get("participant_id") or "—"
+            from collections import Counter
+            kinds = Counter(s.channel_kinds)
+            montage = ", ".join(f"{n} {k}" for k, n in sorted(kinds.items()))
             self.meta_label.setText(
-                f"{s.n_samples} samples @ {s.sfreq:.0f} Hz "
-                f"({s.n_samples / s.sfreq:.1f} s), {len(s.channel_names)} ch, "
-                f"{len(s.markers)} markers — participant {s.meta.get('participant_id')}")
+                f"[{origin}] {s.n_samples} samples @ {s.sfreq:.0f} Hz "
+                f"({s.n_samples / s.sfreq:.1f} s), {len(s.channel_names)} ch "
+                f"({montage}), {len(s.markers)} markers — participant {who}")
         except Exception as exc:  # noqa: BLE001
             self.meta_label.setText(f"Could not read metadata: {exc}")
 
@@ -131,6 +139,14 @@ class ReplayWorkspace(QtWidgets.QWidget):
             self._ctl.config.recording.directory)
         if d:
             self.set_session(d)
+
+    def _browse_file(self) -> None:
+        f, _ = QtWidgets.QFileDialog.getOpenFileName(
+            self, "Select an XDF or FIF recording",
+            self._ctl.config.recording.directory,
+            "EEG recordings (*.xdf *.xdfz *.fif *.fif.gz);;All files (*)")
+        if f:
+            self.set_session(f)
 
     def _start(self) -> None:
         if not self._session_path:
@@ -189,7 +205,7 @@ class ReplayWorkspace(QtWidgets.QWidget):
                 return
             try:
                 from neurobci.acquisition.lsl_publisher import LSLPublisher
-                src = ReplaySource(load_session(self._session_path), loop=True)
+                src = ReplaySource(load_session_any(self._session_path), loop=True)
                 self._publisher = LSLPublisher(src, stream_name="NeuroBCI-Replay")
                 self._publisher.start()
             except Exception as exc:  # noqa: BLE001

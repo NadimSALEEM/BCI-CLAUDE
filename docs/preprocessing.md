@@ -108,10 +108,27 @@ events, each with a channel, a numeric value and a readable reason:
 
 - per-channel: `flat`, `clipping`, `gradient` (electrode pop), `amplitude`,
   `muscle` (HF/EMG), `line_noise`;
-- global: `blinks` (counted on EOG), `missing_samples` (non-finite).
+- per-channel + global: `blinks` — counted on each EOG channel (or, when a
+  montage has no EOG, on the frontal scalp electrodes where blinks project),
+  plus a global total;
+- global: `missing_samples` (non-finite).
 
 Detection never alters the signal — it only *flags*, so you can inspect why
-something was rejected.
+something was rejected. In the **Preprocessing** tab the live read-out is
+split into two panels: **Detected artifacts** (everything above) and a
+dedicated **Eye-blink detection** panel listing per-channel blink counts and
+the total — so ocular activity is tracked separately from signal faults.
+
+### Automatic montage / electrode detection
+
+Channel *kinds* (`eeg` / `eog` / `misc`) are auto-detected from electrode
+names and any declared type by `neurobci.core.electrodes.classify_channel`.
+Standard 10-20 / 10-10 names (`Fp1`, `FCz`, `PO8`, `Oz`, …) are recognised as
+scalp EEG across montages of any size; ocular leads (`EOG`/`VEOG`/`HEOG`) and
+auxiliary channels (`ECG`, `EMG`, `STI…`, `A1`/`M2`, …) are split out — even
+when an XDF/FIF/LSL stream types everything as a blanket `"EEG"`. This is what
+makes blink detection and scalp-only computations behave correctly on
+imported recordings without manual montage editing.
 
 ## Calibrated artifact removal (bad channels, ICA, ASR)
 

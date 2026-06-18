@@ -114,6 +114,15 @@ class SpectralAnalyzer:
             "bands": band_means,
         })
 
+    def reset_history(self) -> None:
+        """Clear the temporal history and restart its time origin at 0.
+
+        Used when the tracked index changes so the "index over time" trace
+        reinitialises instead of carrying over the previous index's curve.
+        """
+        self._history.clear()
+        self._t0 = time.time()
+
     def history_series(self, kind: str, key: str) -> tuple[np.ndarray, np.ndarray]:
         """Return ``(t, values)`` for a history series.
 
