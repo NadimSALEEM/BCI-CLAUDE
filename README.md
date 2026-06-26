@@ -98,8 +98,14 @@ In the **Connection / Acquisition** tab choose *Simulated* or *Live LSL*
 (use **Scan for LSL streams** to discover and pick one), then **Start**.
 Then:
 
-- **Channels** — validate the montage/rate against the configured
-  expectation and correct any mislabelled EEG/EOG channel.
+- **Channels** — customise the montage from the start: even with no stream
+  connected, set the channel count, fill names from a preset, rename channels
+  to real 10-20 positions, set each kind (EEG/EOG/misc) and **delete channels
+  you don't want**; Apply stores it for the next acquisition. With a stream
+  connected it relabels/reclassifies and **drops** channels on the *live*
+  stream — the deletion propagates everywhere (preprocessing, quality, spectral,
+  topomaps, epoching, recording) so analyses never include removed channels.
+  It also validates the montage/rate against the configured expectation.
 - **Raw EEG** — stacked traces (EOG highlighted in amber).
 - **Preprocessing** — edit the pipeline (enable/reorder/edit params),
   switch causal/offline, see the before/after comparison and detected
@@ -119,6 +125,12 @@ Then:
 - **Replay** — load a recorded session and play it back (play/pause/seek/
   speed/loop) through the engine so every tab works on it; inject artifacts
   or re-publish as a virtual LSL stream (see [`docs/replay.md`](docs/replay.md)).
+- **ERP / Epoch Average** — offline analysis of the **Replay tab's** session:
+  read its event markers, optionally **combine** markers into new derived
+  events, group them into conditions, and compute trial averages (per-channel
+  ERP + SEM, butterfly, GFP, electrode-adaptive latency topomap, `.npz`
+  export). Reuses the configured preprocessing unchanged or epochs the raw
+  signal (see [`docs/analysis.md`](docs/analysis.md)).
 - **Recording** — set a pseudonymous participant id + notes, **Start
   recording**, drop event markers, then **Stop**. Sessions are written to
   `recordings/` (see [`docs/recording.md`](docs/recording.md)).
@@ -231,7 +243,7 @@ present from Phase 1 and surfaced in the status bar at all times.
 
 - [Installation](docs/installation.md) · [User guide](docs/user_guide.md) · [Troubleshooting](docs/troubleshooting.md)
 - [Architecture](docs/architecture.md) · [Developer / extension guide](docs/developer.md)
-- Modules: [preprocessing](docs/preprocessing.md) · [P300](docs/paradigm_p300.md) · [other paradigms](docs/paradigms_extra.md) · [control & safety logic](docs/control.md) · [spectral/state](docs/spectral.md) · [recording](docs/recording.md) · [replay](docs/replay.md)
+- Modules: [preprocessing](docs/preprocessing.md) · [P300](docs/paradigm_p300.md) · [other paradigms](docs/paradigms_extra.md) · [control & safety logic](docs/control.md) · [spectral/state](docs/spectral.md) · [ERP/epoch analysis](docs/analysis.md) · [recording](docs/recording.md) · [replay](docs/replay.md)
 - **Read before trusting results:** [Scientific limitations](docs/scientific_limitations.md) · [Safety](docs/safety.md)
 - Examples: [`examples/quickstart.py`](examples/quickstart.py), [`examples/offline_analysis.py`](examples/offline_analysis.py), [`examples/configs/`](examples/configs/)
 

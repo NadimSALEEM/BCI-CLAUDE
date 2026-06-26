@@ -18,6 +18,7 @@ import logging
 import numpy as np
 from scipy.interpolate import griddata
 from scipy.ndimage import gaussian_filter
+from scipy.spatial import cKDTree
 
 logger = logging.getLogger(__name__)
 
@@ -73,21 +74,45 @@ def _position_lut() -> dict[str, tuple[float, float]]:
     return _POS_LUT
 
 
-def channel_positions_2d(names: list[str]) -> tuple[np.ndarray, np.ndarray]:
+def channel_positions_2d(
+    names: list[str],
+    overrides: dict[str, tuple[float, float]] | None = None,
+) -> tuple[np.ndarray, np.ndarray]:
     """Return ``(positions (n,2), found_mask (n,))`` for the given channels.
 
     Matching is case-insensitive and spans the curated 10-20 table plus the
     MNE-derived extension, so real montage names resolve to scalp positions.
+    ``overrides`` (name -> ``(x, y)`` in the same normalised, unit-radius
+    layout) takes precedence over the lookup, so a custom montage can pin
+    electrodes the standard tables don't know.
     """
     lut = _position_lut()
+    ov = {(k or "").strip().lower(): tuple(v) for k, v in (overrides or {}).items()}
     pos = np.full((len(names), 2), np.nan)
     found = np.zeros(len(names), dtype=bool)
     for i, n in enumerate(names):
-        xy = lut.get((n or "").strip().lower())
+        key = (n or "").strip().lower()
+        xy = ov[key] if key in ov else lut.get(key)
         if xy is not None:
             pos[i] = xy
             found[i] = True
     return pos, found
+
+
+def _coverage_radius(pts: np.ndarray) -> float:
+    """Pick a masking radius from the actual electrode spacing.
+
+    A dense cap gives a small radius (the map hugs the electrodes); a sparse
+    montage gives a larger but bounded one. This is what makes the topomap
+    *adaptive to the present electrodes* instead of extrapolating a value into
+    scalp areas no electrode covers.
+    """
+    if len(pts) < 2:
+        return 0.6
+    tree = cKDTree(pts)
+    nn = tree.query(pts, k=2)[0][:, 1]          # nearest-neighbour distance
+    spacing = float(np.median(nn))
+    return float(np.clip(spacing * 1.3, 0.22, 0.7))
 
 
 def interpolate_topomap(
@@ -96,6 +121,7 @@ def interpolate_topomap(
     found: np.ndarray,
     res: int = 64,
     smooth_sigma: float = 1.5,
+    clip_to_coverage: bool = True,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Interpolate channel values onto a head-disc grid.
 
@@ -103,6 +129,11 @@ def interpolate_topomap(
     unit head circle. Only channels with a known position and a finite value
     are used as anchors. A light Gaussian blur (``smooth_sigma`` grid cells,
     scaled to the resolution) removes interpolation facets for a smooth map.
+
+    With ``clip_to_coverage`` (default), grid cells farther than the local
+    electrode spacing from every anchor are masked out, so the map adapts to
+    whichever electrodes are actually present and never paints a colour onto
+    scalp that no electrode covers.
     """
     use = found & np.isfinite(values)
     gx, gy = np.meshgrid(np.linspace(-1.1, 1.1, res), np.linspace(-1.1, 1.1, res))
@@ -119,4 +150,8 @@ def interpolate_topomap(
     if smooth_sigma > 0:
         grid = gaussian_filter(grid, sigma=smooth_sigma * res / 64.0)
     grid[(gx**2 + gy**2) > 1.05**2] = np.nan
+    if clip_to_coverage:
+        radius = _coverage_radius(pts)
+        far = cKDTree(pts).query(np.column_stack([gx.ravel(), gy.ravel()]))[0]
+        grid[(far.reshape(gx.shape) > radius)] = np.nan
     return gx, gy, grid

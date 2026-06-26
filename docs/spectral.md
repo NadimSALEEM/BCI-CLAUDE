@@ -54,9 +54,13 @@ ratios don't have.
 A curated normalised 10-20 layout (`POS_1020`) gives 2-D scalp positions,
 extended on demand from MNE's `standard_1020` montage (rescaled to match and
 clamped to the head disc) so any real electrode name — `Oz`, `POz`, `FCz`,
-`CP3`, … — resolves. `interpolate_topomap` interpolates a per-channel value
+`CP3`, … — resolves (a custom montage can also pin positions via the
+`overrides` argument). `interpolate_topomap` interpolates a per-channel value
 vector onto the head disc (NaN outside, bad/position-less channels excluded)
-and applies a light Gaussian blur for a smooth, facet-free field. The
+and applies a light Gaussian blur for a smooth, facet-free field. The map is
+**adaptive to the present electrodes**: cells farther than the local electrode
+spacing from every sensor are masked, so a partial montage never extrapolates a
+value onto scalp no electrode covers. The
 **Spectral / State** GUI tab renders this with matplotlib as a bilinearly
 interpolated image clipped to the head circle (head outline + nose + sensor
 markers) for a selected band and map mode (absolute / relative / baseline).

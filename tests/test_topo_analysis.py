@@ -58,6 +58,36 @@ class TestTopo(unittest.TestCase):
         r = np.hypot(pos[found][:, 0], pos[found][:, 1])
         self.assertTrue(np.all(r <= 1.01))
 
+    def test_position_overrides_take_precedence(self):
+        # A custom montage can pin an unknown electrode's position.
+        pos, found = channel_positions_2d(
+            ["WeirdName"], overrides={"weirdname": (0.3, -0.4)})
+        self.assertTrue(found[0])
+        np.testing.assert_allclose(pos[0], (0.3, -0.4))
+
+    def test_coverage_masks_uncovered_scalp(self):
+        # Only frontal electrodes present: occipital scalp must stay unpainted
+        # (no extrapolation into regions no electrode covers).
+        names = ["Fp1", "Fp2", "F3", "Fz", "F4"]
+        pos, found = channel_positions_2d(names)
+        vals = np.arange(len(names), dtype=float)
+        gx, gy, gz = interpolate_topomap(vals, pos, found, res=80)
+        # A grid cell near the occiput (back of head) is far from every anchor.
+        occ = (np.abs(gx - 0.0) < 0.05) & (np.abs(gy - (-0.85)) < 0.05)
+        self.assertTrue(np.all(np.isnan(gz[occ])))
+        # The frontal region (where electrodes are) is painted.
+        front = (np.abs(gx - 0.0) < 0.05) & (np.abs(gy - 0.8) < 0.05)
+        self.assertTrue(np.any(np.isfinite(gz[front])))
+
+    def test_clip_disabled_fills_more(self):
+        names = ["Fp1", "Fp2", "F3", "Fz", "F4"]
+        pos, found = channel_positions_2d(names)
+        vals = np.arange(len(names), dtype=float)
+        _, _, clipped = interpolate_topomap(vals, pos, found, res=80)
+        _, _, full = interpolate_topomap(vals, pos, found, res=80,
+                                         clip_to_coverage=False)
+        self.assertGreater(np.isfinite(full).sum(), np.isfinite(clipped).sum())
+
 
 class TestAnalyzer(unittest.TestCase):
     def _data(self, n=2000, seed=0):

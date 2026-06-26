@@ -53,6 +53,12 @@ class AcquisitionThread:
         self._pipeline = pipeline
         self._pipeline_lock = pipeline_lock or threading.Lock()
 
+        # Channel selection: native-source column indices to keep (None == all).
+        # The buffers/pipeline and this index list are swapped together under
+        # ``_sel_lock`` so a read is always sliced and stored consistently.
+        self._keep_indices: list[int] | None = None
+        self._sel_lock = threading.Lock()
+
         self._thread: threading.Thread | None = None
         self._stop = threading.Event()
 
@@ -81,6 +87,18 @@ class AcquisitionThread:
 
     def set_pipeline(self, pipeline) -> None:
         """Swap the live preprocessing pipeline (engine holds the same lock)."""
+        with self._pipeline_lock:
+            self._pipeline = pipeline
+
+    def set_selection(self, keep_indices, buffer, processed_buffer, pipeline) -> None:
+        """Atomically swap the channel selection and the buffers/pipeline sized
+        for it. The next read is sliced to ``keep_indices`` (native columns) and
+        stored in the new buffers, so width stays consistent end to end.
+        """
+        with self._sel_lock:
+            self._keep_indices = list(keep_indices)
+            self._buffer = buffer
+            self._processed_buffer = processed_buffer
         with self._pipeline_lock:
             self._pipeline = pipeline
 
@@ -127,15 +145,23 @@ class AcquisitionThread:
 
             now = time.time()
             if data.shape[0] > 0:
-                self._handle_data(data, ts, now, sfreq)
+                # Grab the selection and its buffers/pipeline atomically, then
+                # slice the native read down to the kept channels.
+                with self._sel_lock:
+                    keep = self._keep_indices
+                    buf = self._buffer
+                    pbuf = self._processed_buffer
+                if keep is not None:
+                    data = data[:, keep]
+                self._handle_data(data, ts, now, sfreq, buf, pbuf)
             else:
                 self._maybe_mark_stale(now)
 
             self._sleep_remaining(loop_start)
 
-    def _handle_data(self, data, ts, now, sfreq) -> None:
-        self._buffer.append(data, ts)
-        self._write_processed(data, ts)
+    def _handle_data(self, data, ts, now, sfreq, buffer, processed_buffer) -> None:
+        buffer.append(data, ts)
+        self._write_processed(data, ts, processed_buffer)
 
         # Persist to the active recording, if any. A recorder failure must
         # never stop acquisition.
@@ -170,7 +196,7 @@ class AcquisitionThread:
         prev = self._state.connection
         new_status = self._live_status
         self._state.update(
-            samples_received=self._buffer.total_written,
+            samples_received=buffer.total_written,
             measured_sfreq=measured,
             last_timestamp=self._last_ts,
             dropped_samples=self._state.snapshot().dropped_samples + max(dropped, 0),
@@ -179,22 +205,22 @@ class AcquisitionThread:
         if prev != new_status:
             self._bus.publish(EVT_CONNECTION_CHANGED, new_status)
 
-    def _write_processed(self, data, ts) -> None:
+    def _write_processed(self, data, ts, processed_buffer) -> None:
         """Apply the causal pipeline and store the result in the parallel
         buffer. Runs on the single acquisition thread, so filter state is
         continuous; a failure must never stop acquisition (falls back to raw).
         """
-        if self._processed_buffer is None:
+        if processed_buffer is None:
             return
         try:
             with self._pipeline_lock:
                 pipeline = self._pipeline
                 processed = pipeline.process_chunk(data) if pipeline is not None else data
-            self._processed_buffer.append(processed, ts)
+            processed_buffer.append(processed, ts)
         except Exception:  # noqa: BLE001
             logger.exception("Preprocessing failed; storing raw in processed buffer.")
             try:
-                self._processed_buffer.append(data, ts)
+                processed_buffer.append(data, ts)
             except Exception:  # noqa: BLE001
                 logger.debug("Processed-buffer fallback append failed.", exc_info=True)
 

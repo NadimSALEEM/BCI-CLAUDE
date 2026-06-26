@@ -129,6 +129,57 @@ class TestAcquisitionEngine(unittest.TestCase):
         finally:
             engine.stop()
 
+    def test_apply_channel_selection_narrows_live_stream(self):
+        cfg = AppConfig()
+        cfg.acquisition.source_type = "simulated"
+        cfg.acquisition.buffer_seconds = 5.0
+        engine = AcquisitionEngine(cfg)
+        engine.start()
+        try:
+            self.assertTrue(self._wait_for(
+                lambda: engine.buffer is not None and engine.buffer.total_written > 100))
+            native = engine.native_stream_info
+            keep = list(range(native.n_channels - 3))      # drop the last three
+            names = [native.channel_names[i] for i in keep]
+            kinds = [native.channel_kinds[i] for i in keep]
+            info = engine.apply_channel_selection(keep, names, kinds)
+
+            self.assertEqual(info.n_channels, len(keep))
+            self.assertEqual(engine.stream_info.channel_names, names)
+            self.assertEqual(engine.keep_indices, keep)
+            # The native source is unchanged; only the active montage narrows.
+            self.assertEqual(engine.native_stream_info.n_channels, native.n_channels)
+            # New (reduced-width) buffers fill and read back at the kept width.
+            self.assertTrue(self._wait_for(
+                lambda: engine.buffer.total_written > 200))
+            data, _ = engine.latest_seconds(0.5)
+            self.assertEqual(data.shape[1], len(keep))
+            proc, _ = engine.latest_processed_seconds(0.5)
+            self.assertEqual(proc.shape[1], len(keep))
+        finally:
+            engine.stop()
+
+    def test_channel_selection_refused_while_recording(self):
+        with tempfile.TemporaryDirectory() as d:
+            cfg = AppConfig()
+            cfg.recording.directory = d
+            engine = AcquisitionEngine(cfg)
+            engine.start()
+            try:
+                self.assertTrue(self._wait_for(
+                    lambda: engine.buffer and engine.buffer.total_written > 50))
+                engine.start_recording(participant_id="x")
+                native = engine.native_stream_info
+                keep = list(range(native.n_channels - 2))
+                with self.assertRaises(RuntimeError):
+                    engine.apply_channel_selection(
+                        keep,
+                        [native.channel_names[i] for i in keep],
+                        [native.channel_kinds[i] for i in keep],
+                    )
+            finally:
+                engine.stop()
+
     def test_recording_integration(self):
         with tempfile.TemporaryDirectory() as d:
             cfg = AppConfig()

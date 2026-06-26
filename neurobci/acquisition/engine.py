@@ -77,6 +77,13 @@ class AcquisitionEngine:
         self.state = app_state or AppState()
         self.bus = event_bus or EventBus()
         self._source: EEGSource | None = None
+        # Active stream info: the *selected* montage (after any channel drops),
+        # which is what every consumer sees -- not necessarily the raw source's.
+        self._info: StreamInfo | None = None
+        # Native-source column indices currently kept (None == keep all). The
+        # acquisition thread slices each read by these before buffering, so the
+        # whole pipeline/quality/spectral/recording stack works on kept channels.
+        self._keep_indices: list[int] | None = None
         self._buffer: RingBuffer | None = None
         self._processed_buffer: RingBuffer | None = None
         self._pipeline: Pipeline | None = None
@@ -107,7 +114,18 @@ class AcquisitionEngine:
 
     @property
     def stream_info(self) -> StreamInfo | None:
+        """The *active* (selected) stream info every consumer should use."""
+        return self._info
+
+    @property
+    def native_stream_info(self) -> StreamInfo | None:
+        """The raw source's info, before any channel selection."""
         return self._source.info if self._source else None
+
+    @property
+    def keep_indices(self) -> list[int] | None:
+        """Native-source column indices currently kept (None == all kept)."""
+        return self._keep_indices
 
     @property
     def source(self) -> EEGSource | None:
@@ -125,6 +143,10 @@ class AcquisitionEngine:
         # Start the source first so LSL can populate real stream metadata.
         self._source.start()
         info = self._source.info
+        # Active info starts as the full source montage; channel drops applied
+        # later via apply_channel_selection narrow it.
+        self._info = info
+        self._keep_indices = None
 
         capacity = max(int(self.config.acquisition.buffer_seconds * info.sfreq), 1)
         self._buffer = RingBuffer(capacity=capacity, n_channels=info.n_channels)
@@ -162,6 +184,59 @@ class AcquisitionEngine:
         self._thread.start()
         logger.info("Acquisition engine running in %s mode.", mode.value)
 
+    def apply_channel_selection(
+        self, keep_indices: list[int], names: list[str], kinds: list[str]
+    ) -> StreamInfo:
+        """Narrow the live stream to ``keep_indices`` (native-source columns).
+
+        Rebuilds the ring buffers and preprocessing for the reduced montage and
+        atomically swaps them into the acquisition thread, which then slices
+        every read down to the kept channels. ``names``/``kinds`` label the kept
+        channels (in ``keep_indices`` order). Buffer history is reset. Refuses
+        to run mid-recording (the on-disk width would change). Returns the new
+        active :class:`StreamInfo`.
+        """
+        if not self.running or self._source is None:
+            raise RuntimeError("Channel selection requires a running stream.")
+        if self._recorder is not None:
+            raise RuntimeError("Stop recording before changing channel selection.")
+        native_n = self._source.info.n_channels
+        keep = [int(i) for i in keep_indices]
+        if not keep or any(i < 0 or i >= native_n for i in keep):
+            raise ValueError("Invalid channel selection.")
+        if len(names) != len(keep) or len(kinds) != len(keep):
+            raise ValueError("names/kinds must match keep_indices length.")
+
+        info = StreamInfo(
+            name=self._source.info.name, sfreq=self._source.info.sfreq,
+            channel_names=list(names), channel_kinds=list(kinds),
+            source_kind=self._source.info.source_kind,
+            units=self._source.info.units,
+        )
+        capacity = max(int(self.config.acquisition.buffer_seconds * info.sfreq), 1)
+        new_raw = RingBuffer(capacity=capacity, n_channels=info.n_channels)
+        new_proc = RingBuffer(capacity=capacity, n_channels=info.n_channels)
+        new_pipeline = Pipeline.from_config(
+            self.config.preprocessing, info.sfreq,
+            info.channel_kinds, info.channel_names,
+        )
+        # Swap everything the thread touches in one atomic update.
+        self._thread.set_selection(
+            keep_indices=keep, buffer=new_raw,
+            processed_buffer=new_proc, pipeline=new_pipeline,
+        )
+        self._keep_indices = keep
+        self._info = info
+        self._buffer = new_raw
+        self._processed_buffer = new_proc
+        with self._pipeline_lock:
+            self._pipeline = new_pipeline
+        self.state.update(stream_info=info)
+        self.bus.publish(EVT_STREAM_INFO, info)
+        logger.info("Channel selection applied: %d of %d channels kept.",
+                    len(keep), native_n)
+        return info
+
     def stop(self) -> None:
         if self._recorder is not None:
             self.stop_recording()
@@ -169,6 +244,8 @@ class AcquisitionEngine:
             self._thread.stop()
         self._thread = None
         self._source = None
+        self._info = None
+        self._keep_indices = None
         with self._pipeline_lock:
             self._pipeline = None
         self._processed_buffer = None

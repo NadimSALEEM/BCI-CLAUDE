@@ -23,8 +23,8 @@ class TestAppConstruction(unittest.TestCase):
         engine = AcquisitionEngine(AppConfig())
         win = MainWindow(engine, AppConfig())
         try:
-            # All ten workspaces present and each exposes update_view.
-            self.assertEqual(win.tabs.count(), 10)
+            # All workspaces present and each exposes update_view.
+            self.assertEqual(win.tabs.count(), 11)
             for i in range(win.tabs.count()):
                 w = win.tabs.widget(i)
                 self.assertTrue(hasattr(w, "update_view"))

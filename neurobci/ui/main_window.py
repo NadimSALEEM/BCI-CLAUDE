@@ -17,6 +17,7 @@ from neurobci.config.schema import AppConfig
 from neurobci.quality.metrics import QualityRating, compute_quality
 from neurobci.ui.widgets.status_bar import StatusBar
 from neurobci.ui.workspaces.acquisition_ws import AcquisitionWorkspace
+from neurobci.ui.workspaces.analysis_ws import AnalysisWorkspace
 from neurobci.ui.workspaces.calibration_ws import CalibrationWorkspace
 from neurobci.ui.workspaces.channels_ws import ChannelsWorkspace
 from neurobci.ui.workspaces.control_ws import ControlWorkspace
@@ -83,6 +84,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.control_ws = ControlWorkspace(self)
         self.spectral_ws = SpectralWorkspace(self)
         self.replay_ws = ReplayWorkspace(self)
+        self.analysis_ws = AnalysisWorkspace(self)
         self.recording_ws = RecordingWorkspace(self)
         self.tabs.addTab(self.acq_ws, "Connection / Acquisition")
         self.tabs.addTab(self.channels_ws, "Channels")
@@ -93,6 +95,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.tabs.addTab(self.calibration_ws, "Calibration")
         self.tabs.addTab(self.control_ws, "Control / BCI")
         self.tabs.addTab(self.replay_ws, "Replay")
+        self.tabs.addTab(self.analysis_ws, "ERP / Epoch Average")
         self.tabs.addTab(self.recording_ws, "Recording")
         self.setCentralWidget(self.tabs)
 
