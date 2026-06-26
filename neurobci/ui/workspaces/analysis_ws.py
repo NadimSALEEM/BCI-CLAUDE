@@ -52,8 +52,21 @@ except Exception:  # noqa: BLE001
 # A fixed, colour-blind-friendly palette cycled across conditions.
 _PALETTE = ["#4f9fe0", "#e0823a", "#36c24a", "#d8508a",
             "#b07cf0", "#e0c040", "#46c7c0", "#d85050"]
+_DIFF_COLOR = "#f2f2f2"          # difference waveform: distinct, drawn dashed
 
 _MARKER_COLS = ["Use", "Label", "Count", "Condition"]
+
+
+@dataclasses.dataclass
+class _Trace:
+    """One curve to render (a condition average or a difference waveform)."""
+
+    name: str
+    average: np.ndarray          # (n_channels, n_times)
+    sem: np.ndarray              # (n_channels, n_times)
+    color: str
+    legend: str
+    is_diff: bool = False
 
 
 class AnalysisWorkspace(QtWidgets.QWidget):
@@ -64,6 +77,7 @@ class AnalysisWorkspace(QtWidgets.QWidget):
         self._markers: list[dict] = []          # session markers + derived
         self._result = None
         self._cond_colors: dict[str, str] = {}
+        self._traces: list[_Trace] = []
         self._loaded_path: str | None = None
         self._montage_note = ""
         self._build()
@@ -199,6 +213,26 @@ class AnalysisWorkspace(QtWidgets.QWidget):
         ctrl.addWidget(QtWidgets.QLabel("at"))
         ctrl.addWidget(self.latency)
         rl.addLayout(ctrl)
+
+        # --- difference waveform (condition A − condition B) ------------- #
+        diffrow = QtWidgets.QHBoxLayout()
+        self.diff_chk = QtWidgets.QCheckBox("Difference")
+        self.diff_chk.setToolTip(
+            "Overlay a difference waveform A − B (e.g. error − correct) in the "
+            "evoked, GFP and topomap views.")
+        self.diff_chk.setEnabled(False)
+        self.diff_chk.stateChanged.connect(self._on_diff_changed)
+        self.diff_a = QtWidgets.QComboBox()
+        self.diff_b = QtWidgets.QComboBox()
+        for c in (self.diff_a, self.diff_b):
+            c.setEnabled(False)
+            c.currentIndexChanged.connect(self._on_diff_changed)
+        diffrow.addWidget(self.diff_chk)
+        diffrow.addWidget(self.diff_a)
+        diffrow.addWidget(QtWidgets.QLabel("−"))
+        diffrow.addWidget(self.diff_b)
+        diffrow.addStretch(1)
+        rl.addLayout(diffrow)
 
         self.erp_plot = pg.PlotWidget(title="Evoked response")
         self.erp_plot.setLabel("bottom", "Time", units="s")
@@ -473,6 +507,8 @@ class AnalysisWorkspace(QtWidgets.QWidget):
             c.name: _PALETTE[i % len(_PALETTE)]
             for i, c in enumerate(result.conditions)}
         self._refresh_controls(result)
+        self._populate_diff_combos(result)
+        self._rebuild_traces()
         self._show_summary(result)
         self._redraw_traces()
         self._redraw_topomap()
@@ -488,10 +524,72 @@ class AnalysisWorkspace(QtWidgets.QWidget):
         self.channel_combo.setCurrentIndex(idx)
         self.channel_combo.blockSignals(False)
 
+    # ----- difference waveform / trace assembly ------------------------- #
+
+    def _populate_diff_combos(self, result) -> None:
+        names = [c.name for c in result.conditions if c.n_epochs]
+        enable = len(names) >= 2
+        for combo, default in ((self.diff_a, 0), (self.diff_b, 1)):
+            combo.blockSignals(True)
+            combo.clear()
+            combo.addItems(names)
+            if enable:
+                combo.setCurrentIndex(default)
+            combo.setEnabled(enable)
+            combo.blockSignals(False)
+        if not enable:
+            self.diff_chk.setChecked(False)
+        self.diff_chk.setEnabled(enable)
+
+    def _diff_trace(self) -> _Trace | None:
+        if self._result is None or not self.diff_chk.isChecked():
+            return None
+        a = self._result.condition(self.diff_a.currentText())
+        b = self._result.condition(self.diff_b.currentText())
+        if not a or not b or a is b or not a.n_epochs or not b.n_epochs:
+            return None
+        name = f"{a.name} − {b.name}"
+        # SEM of an independent difference adds in quadrature.
+        sem = np.sqrt(a.sem ** 2 + b.sem ** 2)
+        return _Trace(name, a.average - b.average, sem, _DIFF_COLOR, name,
+                      is_diff=True)
+
+    def _rebuild_traces(self) -> None:
+        """Assemble the curves to draw: each condition plus an optional A−B."""
+        self._traces = []
+        if self._result is not None:
+            for c in self._result.conditions:
+                if not c.n_epochs:
+                    continue
+                color = self._cond_colors.get(c.name, "#cccccc")
+                self._traces.append(_Trace(
+                    c.name, c.average, c.sem, color,
+                    f"{c.name} (n={c.n_epochs})"))
+            diff = self._diff_trace()
+            if diff is not None:
+                self._traces.append(diff)
+        # The topomap can target any trace (including the difference).
+        prev = self.topo_cond.currentText()
+        names = [t.name for t in self._traces]
         self.topo_cond.blockSignals(True)
         self.topo_cond.clear()
-        self.topo_cond.addItems([c.name for c in result.conditions])
+        self.topo_cond.addItems(names)
+        self.topo_cond.setCurrentIndex(names.index(prev) if prev in names else 0)
         self.topo_cond.blockSignals(False)
+
+    def _on_diff_changed(self) -> None:
+        if self._result is None:
+            return
+        self._rebuild_traces()
+        self._redraw_traces()
+        self._redraw_topomap()
+
+    def _current_topo_trace(self) -> _Trace | None:
+        name = self.topo_cond.currentText()
+        for t in self._traces:
+            if t.name == name:
+                return t
+        return self._traces[0] if self._traces else None
 
     def _show_summary(self, result) -> None:
         rows = []
@@ -518,59 +616,58 @@ class AnalysisWorkspace(QtWidgets.QWidget):
         self._draw_erp()
         self._draw_gfp()
 
+    def _pen(self, trace: _Trace, width: int = 2):
+        style = QtCore.Qt.DashLine if trace.is_diff else QtCore.Qt.SolidLine
+        return pg.mkPen(trace.color, width=width, style=style)
+
     def _draw_erp(self) -> None:
         result = self._result
         self._clear_plot(self.erp_plot)
         t = result.times
         if self.butterfly_chk.isChecked():
-            cond = self._current_topo_condition() or result.conditions[0]
-            self.erp_plot.setTitle(f"Butterfly — {cond.name}")
+            tr = self._current_topo_trace()
+            if tr is None:
+                return
+            self.erp_plot.setTitle(f"Butterfly — {tr.name}")
             for i in result.eeg_indices:
-                self.erp_plot.plot(t, cond.average[i],
+                self.erp_plot.plot(t, tr.average[i],
                                    pen=pg.mkPen("#6fa8d0", width=1))
         else:
             ch = self.channel_combo.currentIndex()
             name = self.channel_combo.currentText()
             self.erp_plot.setTitle(f"Evoked response — {name}")
-            for c in result.conditions:
-                if not c.n_epochs:
-                    continue
-                color = self._cond_colors.get(c.name, "#cccccc")
-                mean = c.average[ch]
-                sem = c.sem[ch]
+            for tr in self._traces:
+                mean = tr.average[ch]
+                sem = tr.sem[ch]
                 upper = self.erp_plot.plot(t, mean + sem, pen=None)
                 lower = self.erp_plot.plot(t, mean - sem, pen=None)
                 fill = pg.FillBetweenItem(upper, lower,
-                                          brush=pg.mkBrush(self._rgba(color, 50)))
+                                          brush=pg.mkBrush(self._rgba(tr.color, 50)))
                 self.erp_plot.addItem(fill)
-                self.erp_plot.plot(t, mean, pen=pg.mkPen(color, width=2),
-                                   name=f"{c.name} (n={c.n_epochs})")
+                self.erp_plot.plot(t, mean, pen=self._pen(tr), name=tr.legend)
         self._mark_zero(self.erp_plot)
 
     def _draw_gfp(self) -> None:
         result = self._result
         self._clear_plot(self.gfp_plot)
         t = result.times
-        for c in result.conditions:
-            if not c.n_epochs:
-                continue
-            color = self._cond_colors.get(c.name, "#cccccc")
-            gfp = global_field_power(c.average, result.eeg_indices)
-            self.gfp_plot.plot(t, gfp, pen=pg.mkPen(color, width=2), name=c.name)
+        for tr in self._traces:
+            gfp = global_field_power(tr.average, result.eeg_indices)
+            self.gfp_plot.plot(t, gfp, pen=self._pen(tr), name=tr.name)
         self._mark_zero(self.gfp_plot)
 
     def _redraw_topomap(self) -> None:
         if self._result is None or self.canvas is None:
             return
         result = self._result
-        cond = self._current_topo_condition()
+        tr = self._current_topo_trace()
         self.ax.clear()
         self.ax.set_facecolor("#14181c")
-        if cond is not None and cond.n_epochs:
+        if tr is not None:
             idx = latency_index(result.times, self.latency.value())
             # Anchor only on scalp EEG channels so a non-scalp channel that
             # happens to share a 10-20-like name can never skew the map.
-            vals = cond.average[:, idx].copy()
+            vals = tr.average[:, idx].copy()
             eeg = set(result.eeg_indices)
             for i in range(len(result.channel_names)):
                 if i not in eeg:
@@ -591,18 +688,13 @@ class AnalysisWorkspace(QtWidgets.QWidget):
             self.ax.scatter(pos[found, 0], pos[found, 1], c="#dddddd", s=10,
                             zorder=3)
             self.ax.set_title(
-                f"{cond.name} @ {result.times[idx] * 1000:.0f} ms",
+                f"{tr.name} @ {result.times[idx] * 1000:.0f} ms",
                 color="#cdd4da", fontsize=9)
         self.ax.set_xlim(-1.25, 1.25)
         self.ax.set_ylim(-1.25, 1.3)
         self.ax.set_aspect("equal")
         self.ax.axis("off")
         self.canvas.draw_idle()
-
-    def _current_topo_condition(self):
-        if self._result is None:
-            return None
-        return self._result.condition(self.topo_cond.currentText())
 
     def _clear_plot(self, plot) -> None:
         legend = plot.getPlotItem().legend

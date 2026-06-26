@@ -69,6 +69,11 @@ its event labels appear in the marker table.
 - **Evoked response** — per-channel ERP overlay, one curve per condition, with
   a ±SEM band. Toggle **Butterfly** to plot every EEG channel for one
   condition.
+- **Difference waveform** — tick **Difference** and pick two conditions (A − B,
+  e.g. `error − correct`) to overlay their difference as a dashed curve in the
+  evoked and GFP views; its ±SEM adds in quadrature. The difference is also
+  selectable as a **Topo condition**, so you can map the A − B scalp
+  distribution at any latency.
 - **Global field power** — spatial standard deviation across EEG channels,
   one trace per condition (a reference-free measure of response strength).
 - **Scalp topomap** — interpolated map of one condition's average at a chosen
