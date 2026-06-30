@@ -13,20 +13,24 @@ import logging
 from PyQt5 import QtCore, QtWidgets
 
 from neurobci.acquisition.engine import AcquisitionEngine
+from neurobci.analysis.shared.history import AnalysisHistory
 from neurobci.config.schema import AppConfig
 from neurobci.quality.metrics import QualityRating, compute_quality
+from neurobci.ui.widgets.analysis_history import AnalysisHistoryWorkspace
 from neurobci.ui.widgets.status_bar import StatusBar
 from neurobci.ui.workspaces.acquisition_ws import AcquisitionWorkspace
 from neurobci.ui.workspaces.analysis_ws import AnalysisWorkspace
 from neurobci.ui.workspaces.calibration_ws import CalibrationWorkspace
 from neurobci.ui.workspaces.channels_ws import ChannelsWorkspace
 from neurobci.ui.workspaces.control_ws import ControlWorkspace
+from neurobci.ui.workspaces.machine_learning_ws import MachineLearningWorkspace
 from neurobci.ui.workspaces.preprocessing_ws import PreprocessingWorkspace
 from neurobci.ui.workspaces.raw_eeg_ws import RawEEGWorkspace
 from neurobci.ui.workspaces.recording_ws import RecordingWorkspace
 from neurobci.ui.workspaces.replay_ws import ReplayWorkspace
 from neurobci.ui.workspaces.signal_quality_ws import SignalQualityWorkspace
 from neurobci.ui.workspaces.spectral_ws import SpectralWorkspace
+from neurobci.ui.workspaces.statistics_ws import StatisticsWorkspace
 from neurobci.version import APP_NAME, __version__
 
 logger = logging.getLogger(__name__)
@@ -42,6 +46,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._quality_every = max(1, int(config.ui.refresh_hz / 4))
         self.model = None                     # last calibrated ParadigmModel
         self.calibration_result = None
+        self.analysis_history = AnalysisHistory()   # offline stats/ML history
 
         self.setWindowTitle(f"{APP_NAME} {__version__} — EEG / BCI platform")
         self.resize(1180, 760)
@@ -85,6 +90,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self.spectral_ws = SpectralWorkspace(self)
         self.replay_ws = ReplayWorkspace(self)
         self.analysis_ws = AnalysisWorkspace(self)
+        self.statistics_ws = StatisticsWorkspace(self)
+        self.ml_ws = MachineLearningWorkspace(self)
+        self.history_ws = AnalysisHistoryWorkspace(self)
         self.recording_ws = RecordingWorkspace(self)
         self.tabs.addTab(self.acq_ws, "Connection / Acquisition")
         self.tabs.addTab(self.channels_ws, "Channels")
@@ -96,6 +104,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self.tabs.addTab(self.control_ws, "Control / BCI")
         self.tabs.addTab(self.replay_ws, "Replay")
         self.tabs.addTab(self.analysis_ws, "ERP / Epoch Average")
+        self.tabs.addTab(self.statistics_ws, "Statistics")
+        self.tabs.addTab(self.ml_ws, "Machine Learning")
+        self.tabs.addTab(self.history_ws, "Analysis History")
         self.tabs.addTab(self.recording_ws, "Recording")
         self.setCentralWidget(self.tabs)
 
