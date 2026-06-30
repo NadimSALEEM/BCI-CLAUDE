@@ -63,9 +63,10 @@ class _Trace:
 
     name: str
     average: np.ndarray          # (n_channels, n_times)
-    sem: np.ndarray              # (n_channels, n_times)
+    sem: np.ndarray              # (n_channels, n_times) std error of the mean
     color: str
     legend: str
+    std: np.ndarray | None = None  # (n_channels, n_times); None for a difference
     is_diff: bool = False
 
 
@@ -80,6 +81,7 @@ class AnalysisWorkspace(QtWidgets.QWidget):
         self._traces: list[_Trace] = []
         self._loaded_path: str | None = None
         self._montage_note = ""
+        self._calib_note = ""
         self._build()
 
     # ----- construction -------------------------------------------------- #
@@ -164,7 +166,9 @@ class AnalysisWorkspace(QtWidgets.QWidget):
         self.preproc_combo.addItem("Raw (no preprocessing)", False)
         self.preproc_combo.setToolTip(
             "Reuse the platform's configured preprocessing (run zero-phase) "
-            "or epoch the raw signal. This never changes the live pipeline.")
+            "or epoch the raw signal. If you calibrated artifact removal "
+            "(ICA/ASR/bad-channel) on the live stream, that calibration is "
+            "reused here. This never changes the live pipeline.")
         form.addRow("tmin:", self.tmin)
         form.addRow("tmax:", self.tmax)
         form.addRow(self.baseline_chk)
@@ -200,6 +204,16 @@ class AnalysisWorkspace(QtWidgets.QWidget):
         self.channel_combo.currentIndexChanged.connect(self._redraw_traces)
         self.butterfly_chk = QtWidgets.QCheckBox("Butterfly (all channels)")
         self.butterfly_chk.stateChanged.connect(self._redraw_traces)
+        self.band_combo = QtWidgets.QComboBox()
+        self.band_combo.addItem("± SEM", "sem")
+        self.band_combo.addItem("± SD", "sd")
+        self.band_combo.addItem("95% CI", "ci")
+        self.band_combo.addItem("None", "none")
+        self.band_combo.setToolTip(
+            "Shaded band around each evoked average: ± standard error of the "
+            "mean, ± standard deviation across epochs, or a 95% confidence "
+            "interval (1.96·SEM). 'None' hides the band.")
+        self.band_combo.currentIndexChanged.connect(self._redraw_traces)
         self.topo_cond = QtWidgets.QComboBox()
         self.topo_cond.currentIndexChanged.connect(self._redraw_topomap)
         self.latency = self._dspin(-2.0, 5.0, 0.3, " s")
@@ -207,6 +221,8 @@ class AnalysisWorkspace(QtWidgets.QWidget):
         ctrl.addWidget(QtWidgets.QLabel("Channel:"))
         ctrl.addWidget(self.channel_combo)
         ctrl.addWidget(self.butterfly_chk)
+        ctrl.addWidget(QtWidgets.QLabel("Band:"))
+        ctrl.addWidget(self.band_combo)
         ctrl.addStretch(1)
         ctrl.addWidget(QtWidgets.QLabel("Topo condition:"))
         ctrl.addWidget(self.topo_cond)
@@ -459,14 +475,56 @@ class AnalysisWorkspace(QtWidgets.QWidget):
             baseline=baseline, reject_uv=self.reject.value())
 
     def _build_pipeline(self) -> Pipeline | None:
+        """Pick the preprocessing pipeline used to epoch the session.
+
+        Crucially, prefer the engine's *live* pipeline when it carries
+        calibration. ICA/ASR/bad-channel weights live on the fitted stage
+        objects, never in the saved config -- so rebuilding from config drops
+        the calibration and the fitted stage silently passes through. That is
+        exactly the "ICA not fitted" surprise. The live pipeline is only reused
+        when it actually applies to this session (same channels + sampling
+        rate it was calibrated on); otherwise we fall back to a fresh config
+        pipeline and say so.
+        """
+        self._calib_note = ""
         if not self.preproc_combo.currentData():
             return None
+        live = self._live_pipeline()
+        if live is not None and live.requires_fit and live.fitted:
+            if self._pipeline_matches_session(live):
+                return live                       # reuse the calibration
+            self._calib_note = (
+                "Calibrated preprocessing (ICA/ASR/bad-channel) was not reused: "
+                "the loaded session's channels or sampling rate differ from the "
+                "live stream it was calibrated on, so fitted stages pass "
+                "through. Re-calibrate on this montage to apply them.")
         return Pipeline.from_config(
             self._ctl.config.preprocessing,
             sfreq=self._session.sfreq,
             ch_kinds=list(self._session.channel_kinds),
             ch_names=list(self._session.channel_names),
         )
+
+    def _live_pipeline(self) -> Pipeline | None:
+        """The engine's live pipeline (read under its lock), or ``None``."""
+        engine = getattr(self._ctl, "engine", None)
+        if engine is None:
+            return None
+        lock = getattr(engine, "pipeline_lock", None)
+        if lock is not None:
+            with lock:
+                return engine.pipeline
+        return getattr(engine, "pipeline", None)
+
+    def _pipeline_matches_session(self, pipeline: Pipeline) -> bool:
+        """True if ``pipeline`` was prepared for this session's exact montage.
+
+        A calibrated ICA/ASR transform is tied to a specific channel set and
+        sampling rate; reusing it on a different layout would be wrong.
+        """
+        session = self._session
+        return session is not None and pipeline.matches_montage(
+            session.sfreq, session.channel_names)
 
     def _compute(self) -> None:
         if self._session is None:
@@ -485,13 +543,15 @@ class AnalysisWorkspace(QtWidgets.QWidget):
         # Epoch against the working marker set (session markers + any derived).
         session = dataclasses.replace(self._session, markers=self._markers)
 
+        pipeline = self._build_pipeline()
+
         QtWidgets.QApplication.setOverrideCursor(QtGui.QCursor(QtCore.Qt.WaitCursor))
         self.compute_btn.setEnabled(False)
         QtWidgets.QApplication.processEvents()
         try:
             result = compute_erp(
                 session, conditions, window,
-                preprocess=self._build_pipeline(),
+                preprocess=pipeline,
                 reject=self.reject_chk.isChecked(),
             )
         except Exception as exc:  # noqa: BLE001
@@ -502,6 +562,8 @@ class AnalysisWorkspace(QtWidgets.QWidget):
             QtWidgets.QApplication.restoreOverrideCursor()
             self.compute_btn.setEnabled(True)
 
+        if self._calib_note:
+            result.warnings.append(self._calib_note)
         self._result = result
         self._cond_colors = {
             c.name: _PALETTE[i % len(_PALETTE)]
@@ -564,7 +626,7 @@ class AnalysisWorkspace(QtWidgets.QWidget):
                 color = self._cond_colors.get(c.name, "#cccccc")
                 self._traces.append(_Trace(
                     c.name, c.average, c.sem, color,
-                    f"{c.name} (n={c.n_epochs})"))
+                    f"{c.name} (n={c.n_epochs})", std=c.std))
             diff = self._diff_trace()
             if diff is not None:
                 self._traces.append(diff)
@@ -635,17 +697,39 @@ class AnalysisWorkspace(QtWidgets.QWidget):
         else:
             ch = self.channel_combo.currentIndex()
             name = self.channel_combo.currentText()
-            self.erp_plot.setTitle(f"Evoked response — {name}")
+            band = self.band_combo.currentData()
+            label = self.band_combo.currentText()
+            suffix = "" if band == "none" else f"  (shaded: {label})"
+            self.erp_plot.setTitle(f"Evoked response — {name}{suffix}")
             for tr in self._traces:
                 mean = tr.average[ch]
-                sem = tr.sem[ch]
-                upper = self.erp_plot.plot(t, mean + sem, pen=None)
-                lower = self.erp_plot.plot(t, mean - sem, pen=None)
-                fill = pg.FillBetweenItem(upper, lower,
-                                          brush=pg.mkBrush(self._rgba(tr.color, 50)))
-                self.erp_plot.addItem(fill)
+                half = self._band_halfwidth(tr, ch, band)
+                if half is not None:
+                    # Boundaries must be PlotCurveItems: a pen=None PlotDataItem
+                    # never populates its inner curve, so FillBetweenItem would
+                    # read an empty path and draw nothing (pyqtgraph 0.13).
+                    upper = pg.PlotCurveItem(t, mean + half)
+                    lower = pg.PlotCurveItem(t, mean - half)
+                    fill = pg.FillBetweenItem(
+                        upper, lower, brush=pg.mkBrush(self._rgba(tr.color, 50)))
+                    self.erp_plot.addItem(fill)
                 self.erp_plot.plot(t, mean, pen=self._pen(tr), name=tr.legend)
         self._mark_zero(self.erp_plot)
+
+    def _band_halfwidth(self, trace: _Trace, ch: int, mode: str):
+        """Half-width of the shaded band for ``trace`` at channel ``ch``.
+
+        Returns ``None`` when no band should be drawn. ``sd`` is undefined for a
+        difference waveform (a difference of two averages, not a sample), so it
+        draws no band there.
+        """
+        if mode == "none":
+            return None
+        if mode == "sd":
+            return None if trace.std is None else trace.std[ch]
+        if mode == "ci":
+            return 1.96 * trace.sem[ch]
+        return trace.sem[ch]
 
     def _draw_gfp(self) -> None:
         result = self._result
@@ -730,6 +814,7 @@ class AnalysisWorkspace(QtWidgets.QWidget):
         for c in result.conditions:
             payload[f"avg__{c.name}"] = c.average
             payload[f"sem__{c.name}"] = c.sem
+            payload[f"std__{c.name}"] = c.std
             payload[f"n__{c.name}"] = c.n_epochs
         try:
             np.savez_compressed(f, **payload)

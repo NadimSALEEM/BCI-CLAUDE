@@ -96,6 +96,16 @@ class TestErpAnalysis(unittest.TestCase):
         # Untouched channel stays flat at zero.
         np.testing.assert_allclose(a.average[1], 0.0)
 
+    def test_std_and_sem_relationship(self):
+        res = compute_erp(self.session, [Condition("A", ["target"])], WIN,
+                          preprocess=None)
+        a = res.condition("A")
+        self.assertEqual(a.std.shape, a.average.shape)
+        # Channel 0 epochs are constants 2.0 and 4.0 -> population std = 1.0.
+        np.testing.assert_allclose(a.std[0], np.full(WIN.n_times(SF), 1.0))
+        # SEM is the std of the mean: std / sqrt(n).
+        np.testing.assert_allclose(a.sem, a.std / np.sqrt(a.n_epochs))
+
     def test_label_grouping(self):
         conds = [Condition("all", ["target", "nontarget"])]
         res = compute_erp(self.session, conds, WIN, preprocess=None)

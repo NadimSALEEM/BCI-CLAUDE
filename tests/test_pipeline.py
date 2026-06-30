@@ -70,6 +70,35 @@ class TestPipeline(unittest.TestCase):
         self.assertEqual(y.shape, x.shape)
         self.assertTrue(np.all(np.isfinite(y)))
 
+    def test_matches_montage(self):
+        names = ["Fz", "Cz", "EOG"]
+        cfg = PreprocessingConfig(stages=[
+            {"type": "highpass", "enabled": True, "params": {}}])
+        p = Pipeline.from_config(cfg, 500.0, KINDS, ch_names=names)
+        self.assertTrue(p.matches_montage(500.0, names))
+        self.assertTrue(p.matches_montage(500.0005, names))   # within tol
+        self.assertFalse(p.matches_montage(250.0, names))     # sfreq differs
+        self.assertFalse(p.matches_montage(500.0, ["Fz", "Cz", "Oz"]))  # channels
+        self.assertFalse(p.matches_montage(500.0, ["Fz", "Cz"]))        # count
+
+    def test_calibration_lives_on_stage_not_config(self):
+        # The ERP-tab fix relies on this: a fit-requiring stage is unfitted when
+        # rebuilt from config, and only the *fitted* pipeline reports fitted.
+        names = ["C3", "C4", "EOG"]
+        cfg = PreprocessingConfig(stages=[
+            {"type": "ica", "enabled": True, "params": {}}])
+        fresh = Pipeline.from_config(cfg, 200.0, KINDS, ch_names=names)
+        self.assertTrue(fresh.requires_fit)
+        self.assertFalse(fresh.fitted)            # the "ICA not fitted" case
+
+        rng = np.random.default_rng(3)
+        fitted = Pipeline.from_config(cfg, 200.0, KINDS, ch_names=names)
+        fitted.fit(rng.standard_normal((400, 3)))
+        self.assertTrue(fitted.fitted)
+        # Rebuilding from the same config does NOT carry the fit across.
+        self.assertFalse(Pipeline.from_config(cfg, 200.0, KINDS,
+                                              ch_names=names).fitted)
+
 
 if __name__ == "__main__":
     unittest.main()

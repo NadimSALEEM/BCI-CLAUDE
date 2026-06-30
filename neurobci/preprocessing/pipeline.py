@@ -72,6 +72,21 @@ class Pipeline:
     def to_config_stages(self) -> list[dict]:
         return [st.to_dict() for st in self.stages]
 
+    def matches_montage(
+        self, sfreq: float, ch_names: list[str], *, tol: float = 1e-3
+    ) -> bool:
+        """True if this pipeline was prepared for this exact stream layout.
+
+        A calibrated stage (ICA/ASR/bad-channel) learns a transform tied to a
+        specific sampling rate and channel set, so a fitted pipeline may only
+        be reused on data with the same montage. Used by the offline ERP tab
+        to decide whether the live, calibrated pipeline applies to a loaded
+        session (otherwise it rebuilds from config, uncalibrated).
+        """
+        if abs(float(self.sfreq) - float(sfreq)) > tol:
+            return False
+        return list(self.ch_names) == list(ch_names)
+
     # ----- active-stage selection ---------------------------------------- #
 
     def _active(self, mode: str) -> list[ProcessingStage]:

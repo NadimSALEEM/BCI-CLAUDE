@@ -44,6 +44,7 @@ class ConditionAverage:
     labels: list[str]
     average: np.ndarray            # (n_channels, n_times)
     sem: np.ndarray               # (n_channels, n_times) std error of the mean
+    std: np.ndarray               # (n_channels, n_times) std dev across epochs
     epochs: EpochSet
     n_onsets: int                  # markers that matched this condition
 
@@ -209,14 +210,16 @@ def compute_erp(
         )
         if es.n_epochs:
             average = es.X.mean(axis=0)
-            sem = es.X.std(axis=0) / np.sqrt(es.n_epochs)
+            std = es.X.std(axis=0)
+            sem = std / np.sqrt(es.n_epochs)
         else:
             n_times = window.n_times(sfreq)
             average = np.zeros((len(names), n_times))
+            std = np.zeros((len(names), n_times))
             sem = np.zeros((len(names), n_times))
         averages.append(ConditionAverage(
             name=c.name, labels=list(c.labels), average=average, sem=sem,
-            epochs=es, n_onsets=int(onsets.shape[0]),
+            std=std, epochs=es, n_onsets=int(onsets.shape[0]),
         ))
 
     times = window.tmin + np.arange(window.n_times(sfreq)) / sfreq
