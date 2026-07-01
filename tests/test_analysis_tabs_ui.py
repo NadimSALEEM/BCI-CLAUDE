@@ -81,6 +81,27 @@ class TestAnalysisTabsUI(unittest.TestCase):
         ws._run()
         self.assertIn("Interpretation", ws.summary.toPlainText())
 
+    def test_statistics_anova_run(self):
+        from neurobci.ui.workspaces.statistics_ws import StatisticsWorkspace
+        ws = StatisticsWorkspace(_stub_controller())
+        ws._on_bundle(_bundle())
+        ws.mode.setCurrentText("ANOVA / RM / mixed")
+        ws.anova_type.setCurrentText("One-way")
+        ws.feature.setCurrentText("mean_amplitude")
+        ws._run()
+        self.assertIn("ANOVA", ws.summary.toPlainText())
+
+    def test_statistics_rm_falls_back_single_subject(self):
+        from neurobci.ui.workspaces.statistics_ws import StatisticsWorkspace
+        ws = StatisticsWorkspace(_stub_controller())
+        ws._on_bundle(_bundle())            # single session -> 1 subject unit
+        ws.mode.setCurrentText("ANOVA / RM / mixed")
+        ws.anova_type.setCurrentText("Repeated-measures")
+        ws._run()
+        # Falls back to a trial-level one-way ANOVA with an explicit warning.
+        self.assertIn("ANOVA", ws.summary.toPlainText())
+        self.assertIn("fall", ws.diag.toPlainText().lower())
+
     def test_statistics_cluster_run(self):
         from neurobci.ui.workspaces.statistics_ws import StatisticsWorkspace
         ws = StatisticsWorkspace(_stub_controller())

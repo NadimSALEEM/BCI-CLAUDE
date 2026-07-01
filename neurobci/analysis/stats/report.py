@@ -67,6 +67,39 @@ def report_for_test(config, bundle, result, figures=None) -> HTMLReport:
     return rep
 
 
+def report_for_anova(config, bundle, result, figures=None) -> HTMLReport:
+    rep = HTMLReport(f"Statistics report — {result.name}")
+    rep.add_paragraph(
+        f"Analysis level: {config.level} · design: {config.design}", css="muted")
+    _data_section(rep, config, bundle)
+
+    rep.add_heading("Feature")
+    rep.add_keyvalue(config.features or {"feature": "(per-trial scalar)"})
+
+    rep.add_heading("ANOVA table")
+    rep.add_table(result.columns,
+                  [[row.get(c, "") for c in result.columns] for row in result.table])
+    if result.sphericity:
+        rep.add_heading("Sphericity")
+        rep.add_keyvalue(result.sphericity)
+
+    if result.posthoc:
+        rep.add_heading("Post-hoc pairwise comparisons")
+        rep.add_table(result.posthoc_columns,
+                      [[row.get(c, "") for c in result.posthoc_columns]
+                       for row in result.posthoc])
+
+    if result.diagnostics:
+        rep.add_heading("Warnings & diagnostics")
+        rep.add_diagnostics(result.diagnostics)
+
+    rep.add_heading("Interpretation")
+    rep.add_paragraph(result.interpretation)
+    for fig, cap in (figures or []):
+        rep.add_figure(fig, cap)
+    return rep
+
+
 def report_for_cluster(config, bundle, cluster, figures=None) -> HTMLReport:
     rep = HTMLReport("Statistics report — cluster-based permutation test")
     rep.add_paragraph(

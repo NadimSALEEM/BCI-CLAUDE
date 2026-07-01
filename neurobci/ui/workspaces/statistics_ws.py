@@ -19,7 +19,9 @@ import numpy as np
 from PyQt5 import QtCore, QtWidgets
 
 from neurobci.analysis.shared.config import AnalysisConfig
+from neurobci.analysis.shared.deps import MissingDependencyError, have
 from neurobci.analysis.shared.validation import Diagnostic
+from neurobci.analysis.stats import anova as stats_anova
 from neurobci.analysis.stats import mass_univariate as mu
 from neurobci.analysis.stats import report as stats_report
 from neurobci.analysis.stats import tests as stats_tests
@@ -40,7 +42,9 @@ except Exception:  # noqa: BLE001
 _PALETTE = ["#4f9fe0", "#e0823a", "#36c24a", "#d8508a", "#b07cf0", "#e0c040"]
 
 MODES = ["Two-group test", "Multi-group (ANOVA / Kruskal)",
-         "Correlation", "Cluster permutation (time)"]
+         "ANOVA / RM / mixed", "Correlation", "Cluster permutation (time)"]
+ANOVA_TYPES = ["One-way", "Factorial (two-way)", "Repeated-measures",
+               "Friedman (non-parametric RM)", "ANCOVA"]
 TWO_GROUP_TESTS = ["Paired t-test", "Independent t-test", "Welch t-test",
                    "Wilcoxon signed-rank", "Mann-Whitney U", "Permutation t-test"]
 FEATURES = ["mean_amplitude", "peak_amplitude", "peak_latency", "auc", "gfp",
@@ -90,7 +94,9 @@ class StatisticsWorkspace(QtWidgets.QWidget):
             "ERP: paired comparison",
             "ERP: cluster permutation",
             "Spectral: band-power comparison",
-            "Correlation: feature vs reaction time"])
+            "Correlation: feature vs reaction time",
+            "Repeated-measures ANOVA",
+            "Mixed / factorial ANOVA"])
         self.preset.currentIndexChanged.connect(self._apply_preset)
         cl.addWidget(self.preset)
 
@@ -128,6 +134,12 @@ class StatisticsWorkspace(QtWidgets.QWidget):
         gf = QtWidgets.QFormLayout(grp)
         self.test = QtWidgets.QComboBox()
         self.test.addItems(TWO_GROUP_TESTS)
+        self.anova_type = QtWidgets.QComboBox()
+        self.anova_type.addItems(ANOVA_TYPES)
+        self.anova_type.currentIndexChanged.connect(self._refresh_enabled)
+        self.subject_unit = QtWidgets.QComboBox()
+        self.posthoc = QtWidgets.QCheckBox("Post-hoc pairwise")
+        self.posthoc.setChecked(True)
         self.cond_a = QtWidgets.QComboBox()
         self.cond_b = QtWidgets.QComboBox()
         self.metavar = QtWidgets.QComboBox()
@@ -143,9 +155,12 @@ class StatisticsWorkspace(QtWidgets.QWidget):
         self.seed.setRange(0, 999999)
         self.seed.setValue(42)
         gf.addRow("Test:", self.test)
+        gf.addRow("ANOVA type:", self.anova_type)
+        gf.addRow("Subject unit:", self.subject_unit)
+        gf.addRow(self.posthoc)
         gf.addRow("Condition A:", self.cond_a)
         gf.addRow("Condition B:", self.cond_b)
-        gf.addRow("Correlate with:", self.metavar)
+        gf.addRow("2nd factor / covar / correlate:", self.metavar)
         gf.addRow("alpha:", self.alpha)
         gf.addRow("Alternative:", self.alternative)
         gf.addRow("Correction (map):", self.correction)
@@ -216,9 +231,15 @@ class StatisticsWorkspace(QtWidgets.QWidget):
             self.cond_b.setCurrentIndex(1)
         self.channel.clear()
         self.channel.addItems(bundle.channel_names)
+        meta_keys = [k for k in bundle.metadata if k not in ("onset_sample",)]
         self.metavar.clear()
-        self.metavar.addItems([k for k in bundle.metadata
-                               if k not in ("onset_sample",)])
+        self.metavar.addItems(meta_keys)
+        self.subject_unit.clear()
+        self.subject_unit.addItem("Auto (session)", None)
+        for k in meta_keys:
+            self.subject_unit.addItem(f"metadata: {k}", k)
+        n_subj = len(np.unique(bundle.groups))
+        self._n_subjects = n_subj
         self.run_btn.setEnabled(True)
         self.summary.setText(
             f"Epoched {bundle.n_trials} trials across "
@@ -234,11 +255,21 @@ class StatisticsWorkspace(QtWidgets.QWidget):
             w.setEnabled(is_band)
         self.peak_sign.setEnabled(self.feature.currentText() in
                                   ("peak_amplitude", "peak_latency"))
+        is_anova = mode == "ANOVA / RM / mixed"
+        atype = self.anova_type.currentText()
         self.channel.setEnabled(self.roi.currentText() == "Single channel")
         self.test.setEnabled(mode == "Two-group test")
+        self.anova_type.setEnabled(is_anova)
+        self.subject_unit.setEnabled(is_anova and atype in
+                                     ("Repeated-measures", "Friedman (non-parametric RM)"))
+        self.posthoc.setEnabled(is_anova)
+        self.cond_a.setEnabled(mode in ("Two-group test", "Cluster permutation (time)"))
         self.cond_b.setEnabled(mode in ("Two-group test", "Cluster permutation (time)"))
-        self.metavar.setEnabled(mode == "Correlation")
-        self.correction.setEnabled(mode == "Cluster permutation (time)")
+        # 2nd factor / covariate / correlate variable
+        self.metavar.setEnabled(mode == "Correlation" or
+                                (is_anova and atype in ("Factorial (two-way)", "ANCOVA")))
+        self.correction.setEnabled(mode == "Cluster permutation (time)" or
+                                   (is_anova and self.posthoc.isChecked()))
         self.nperm.setEnabled(mode in ("Two-group test", "Cluster permutation (time)"))
 
     def _apply_preset(self, idx: int) -> None:
@@ -260,6 +291,12 @@ class StatisticsWorkspace(QtWidgets.QWidget):
             self.fmin.setValue(8.0); self.fmax.setValue(13.0)
         elif name.startswith("Correlation"):
             self.mode.setCurrentText("Correlation")
+        elif name.startswith("Repeated-measures"):
+            self.mode.setCurrentText("ANOVA / RM / mixed")
+            self.anova_type.setCurrentText("Repeated-measures")
+        elif name.startswith("Mixed / factorial"):
+            self.mode.setCurrentText("ANOVA / RM / mixed")
+            self.anova_type.setCurrentText("Factorial (two-way)")
         self._refresh_enabled()
 
     # ----- feature spec -------------------------------------------------- #
@@ -305,10 +342,14 @@ class StatisticsWorkspace(QtWidgets.QWidget):
                 self._run_two_group()
             elif mode == "Multi-group (ANOVA / Kruskal)":
                 self._run_multi_group()
+            elif mode == "ANOVA / RM / mixed":
+                self._run_anova()
             elif mode == "Correlation":
                 self._run_correlation()
             else:
                 self._run_cluster()
+        except MissingDependencyError as exc:
+            QtWidgets.QMessageBox.warning(self, "Optional dependency needed", str(exc))
         except Exception as exc:  # noqa: BLE001
             logger.exception("Statistics run failed.")
             QtWidgets.QMessageBox.critical(self, "Analysis error", str(exc))
@@ -364,6 +405,70 @@ class StatisticsWorkspace(QtWidgets.QWidget):
         cfg = self._config("anova_oneway")
         self._show(stats_report.report_for_test(cfg, self._bundle, res,
                                                 self._figs), cfg, res.diagnostics)
+
+    def _run_anova(self) -> None:
+        spec = self._feature_spec()
+        vals = compute_feature(self._bundle, spec)
+        atype = self.anova_type.currentText()
+        alpha = self.alpha.value()
+        correction = self.correction.currentText()
+        posthoc = self.posthoc.isChecked()
+        extra_diags: list[Diagnostic] = []
+
+        if atype in ("Repeated-measures", "Friedman (non-parametric RM)"):
+            subj_key = self.subject_unit.currentData()
+            agg, dropped, subj_name = stats_anova.subject_condition_frame(
+                self._bundle, vals, subject=subj_key)
+            n_subj = int(agg["subject"].nunique()) if len(agg) else 0
+            if dropped:
+                extra_diags.append(Diagnostic(
+                    "warning", f"{dropped} subject(s) lacked all conditions and "
+                    f"were dropped (RM/mixed needs a fully-crossed design)."))
+            if n_subj < 2:
+                extra_diags.append(Diagnostic(
+                    "warning", "Repeated-measures needs >=2 subjects/units that "
+                    "each appear in every condition. With one unit (e.g. a single "
+                    "session), this falls back to a trial-level one-way ANOVA — an "
+                    "exploratory approximation, not a true RM-ANOVA."))
+                res = stats_anova.one_way(
+                    stats_anova.trial_frame(self._bundle, vals), alpha=alpha,
+                    posthoc=posthoc, correction=correction)
+            else:
+                res = stats_anova.repeated_measures(
+                    agg, within="condition", subject="subject", alpha=alpha,
+                    posthoc=posthoc, correction=correction,
+                    parametric=(atype == "Repeated-measures"))
+        elif atype == "Factorial (two-way)":
+            if self.metavar.count() == 0:
+                QtWidgets.QMessageBox.information(
+                    self, "No 2nd factor", "This session has no numeric trial "
+                    "metadata to use as a second factor (median-split).")
+                return
+            key = self.metavar.currentText()
+            df = stats_anova.trial_frame(self._bundle, vals, factor2=key,
+                                         factor2_name=key)
+            res = stats_anova.factorial(df, factors=("condition", key), alpha=alpha,
+                                        posthoc=posthoc, correction=correction)
+        elif atype == "ANCOVA":
+            if self.metavar.count() == 0:
+                QtWidgets.QMessageBox.information(
+                    self, "No covariate", "This session has no numeric trial "
+                    "metadata to use as a covariate.")
+                return
+            key = self.metavar.currentText()
+            df = stats_anova.trial_frame(self._bundle, vals, covariate=key,
+                                         covariate_name=key)
+            res = stats_anova.ancova(df, between="condition", covar=key, alpha=alpha)
+        else:  # One-way
+            res = stats_anova.one_way(
+                stats_anova.trial_frame(self._bundle, vals), alpha=alpha,
+                posthoc=posthoc, correction=correction)
+
+        res.diagnostics = list(res.diagnostics) + extra_diags
+        self._plot_means(feature_by_condition(vals, self._bundle))
+        cfg = self._config(f"anova::{atype}")
+        self._show(stats_report.report_for_anova(cfg, self._bundle, res,
+                                                 self._figs), cfg, res.diagnostics)
 
     def _run_correlation(self) -> None:
         if self.metavar.count() == 0:
@@ -448,6 +553,26 @@ class StatisticsWorkspace(QtWidgets.QWidget):
         self.fig.tight_layout()
         self.canvas.draw_idle()
         self._figs = [(self.fig, "Feature distribution by condition")]
+
+    def _plot_means(self, by: dict) -> None:
+        self._figs = []
+        if self.canvas is None:
+            return
+        ax = self._new_axes()
+        names = list(by)
+        means = [float(np.mean(by[n])) for n in names]
+        sems = [float(np.std(by[n], ddof=1) / np.sqrt(len(by[n])))
+                if len(by[n]) > 1 else 0.0 for n in names]
+        colors = [_PALETTE[i % len(_PALETTE)] for i in range(len(names))]
+        ax.bar(range(len(names)), means, yerr=sems, color=colors, alpha=0.8,
+               capsize=4)
+        ax.set_xticks(range(len(names)))
+        ax.set_xticklabels(names)
+        ax.set_ylabel("feature (mean ± SEM)")
+        ax.set_title("Condition means")
+        self.fig.tight_layout()
+        self.canvas.draw_idle()
+        self._figs = [(self.fig, "Condition means ± SEM")]
 
     def _plot_scatter(self, x, y, ylabel) -> None:
         self._figs = []
