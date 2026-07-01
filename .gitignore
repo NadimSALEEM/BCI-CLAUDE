@@ -12,6 +12,7 @@ logs/
 recordings/
 models/
 examples/data/
+*report.html
 
 # Keep configs/ but ignore scratch profiles if desired:
 # configs/scratch_*.json
