@@ -24,8 +24,10 @@ from neurobci.analysis.ml import models as ml_models
 from neurobci.analysis.ml import report as ml_report
 from neurobci.analysis.ml.features import (MLFeatureConfig, RawEpochsSpec,
                                            extract_features, tensor_X)
-from neurobci.analysis.ml.pipelines import PreprocOptions, build_pipeline
+from neurobci.analysis.ml.pipelines import (PreprocOptions, balancing_capability,
+                                            build_pipeline)
 from neurobci.analysis.shared.config import AnalysisConfig
+from neurobci.analysis.shared.validation import Diagnostic
 from neurobci.analysis.shared.worker import AnalysisWorker
 from neurobci.analysis.stats.features import (BandPowerSpec, ERPFeatureSpec,
                                               STANDARD_ROIS)
@@ -54,6 +56,8 @@ class MachineLearningWorkspace(QtWidgets.QWidget):
         self._ctl = controller
         self._bundle = None
         self._evals: list = []
+        self._omni = None
+        self._corrected: dict = {}
         self._worker = None
         self._last_config = None
         self._build()
@@ -106,6 +110,10 @@ class MachineLearningWorkspace(QtWidgets.QWidget):
         self.downsample = QtWidgets.QSpinBox()
         self.downsample.setRange(1, 32)
         self.downsample.setValue(4)
+        self.downsample.setToolTip(
+            "Only used by the 'Raw epochs (downsampled)' feature set. Uses "
+            "anti-aliased decimation (low-pass then subsample), so it is safe "
+            "even without a low-pass in preprocessing.")
         form.addRow("Feature set:", self.feature_set)
         form.addRow("t-min (s):", self.tmin)
         form.addRow("t-max (s):", self.tmax)
@@ -142,20 +150,36 @@ class MachineLearningWorkspace(QtWidgets.QWidget):
         self.n_splits.setValue(5)
         self.scoring = QtWidgets.QComboBox()
         self.scoring.addItems(CLF_SCORING)
+        self.scoring.setToolTip(
+            "CV mean, 95% CI, the Dummy baseline and the permutation chance "
+            "level are all computed under THIS metric — never mixed. On "
+            "imbalanced data prefer balanced_accuracy or roc_auc.")
         self.seed = QtWidgets.QSpinBox()
         self.seed.setRange(0, 999999)
         self.seed.setValue(42)
-        self.chance = QtWidgets.QCheckBox("Permutation chance test")
+        self.chance = QtWidgets.QCheckBox("Per-model permutation chance test")
         self.chance.setChecked(True)
         self.n_perm = QtWidgets.QSpinBox()
         self.n_perm.setRange(20, 5000)
         self.n_perm.setValue(100)
+        self.omnibus = QtWidgets.QCheckBox(
+            "Best-of-panel omnibus test (corrects for picking the best model)")
+        self.omnibus.setToolTip(
+            "Reshuffles labels and re-scores the WHOLE panel each permutation, "
+            "comparing the real best model to the null distribution of the "
+            "best-of-panel score. This is the honest p when you report whichever "
+            "of N models looks best. Slow: permutations × models × folds fits.")
+        self.n_omni = QtWidgets.QSpinBox()
+        self.n_omni.setRange(50, 5000)
+        self.n_omni.setValue(200)
         cf.addRow("Strategy:", self.cv)
         cf.addRow("n splits:", self.n_splits)
         cf.addRow("Scoring:", self.scoring)
         cf.addRow("Seed:", self.seed)
         cf.addRow(self.chance)
         cf.addRow("Permutations:", self.n_perm)
+        cf.addRow(self.omnibus)
+        cf.addRow("Omnibus permutations:", self.n_omni)
         cl.addWidget(cvb)
 
         run = QtWidgets.QHBoxLayout()
@@ -178,9 +202,18 @@ class MachineLearningWorkspace(QtWidgets.QWidget):
         w = QtWidgets.QWidget()
         rl = QtWidgets.QVBoxLayout(w)
         rl.addWidget(QtWidgets.QLabel("<b>Model comparison</b>"))
-        self.table = QtWidgets.QTableWidget(0, 7)
+        self.table = QtWidgets.QTableWidget(0, 8)
         self.table.setHorizontalHeaderLabels(
-            ["Model", "CV mean", "±", "95% CI", "Chance", "p", "fit s"])
+            ["Model", "CV mean", "±", "95% CI", "Chance", "p", "p (corr)", "fit s"])
+        self.table.horizontalHeaderItem(3).setToolTip(
+            "t-interval over the 5 CV fold scores — a spread indicator, NOT a "
+            "significance test. Judge significance from the p / p(corr) columns.")
+        self.table.horizontalHeaderItem(5).setToolTip(
+            "Per-model permutation p vs chance — uncorrected for comparing "
+            "multiple models.")
+        self.table.horizontalHeaderItem(6).setToolTip(
+            "p corrected for model selection: best-of-panel omnibus if run, "
+            "else Holm across the models' p-values.")
         self.table.verticalHeader().setVisible(False)
         self.table.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectRows)
         self.table.setEditTriggers(QtWidgets.QAbstractItemView.NoEditTriggers)
@@ -232,6 +265,15 @@ class MachineLearningWorkspace(QtWidgets.QWidget):
         return self.feature_set.currentText() == TENSOR_SET
 
     def _refresh_models(self) -> None:
+        # Enable only the controls the current feature set actually consumes,
+        # so the band / downsample / window fields never silently no-op.
+        fs = self.feature_set.currentText()
+        self.tmin.setEnabled(fs == "ERP window (per channel)")
+        self.tmax.setEnabled(fs == "ERP window (per channel)")
+        self.fmin.setEnabled(fs == "Band power (per channel)")
+        self.fmax.setEnabled(fs == "Band power (per channel)")
+        self.downsample.setEnabled(fs == "Raw epochs (downsampled)")
+
         data_shape = "tensor" if self._wants_tensor() else "tabular"
         reg = ml_models.registry("classification")
         self.model_list.clear()
@@ -348,22 +390,31 @@ class MachineLearningWorkspace(QtWidgets.QWidget):
         scoring = self.scoring.currentText()
         do_chance = self.chance.isChecked()
         n_perm = self.n_perm.value()
+        do_omnibus = self.omnibus.isChecked()
+        n_omni = self.n_omni.value()
         seed = self.seed.value()
         class_names = list(self._bundle.condition_names)
 
         def job(progress, is_cancelled):
-            evals = []
+            evals, panel = [], []
             for i, key in enumerate(keys):
                 if is_cancelled():
                     break
                 spec = ml_models.get_spec(key)
-                progress(100 * i / len(keys), f"Training {spec.label}…")
+                progress(90 * i / len(keys) if do_omnibus else 100 * i / len(keys),
+                         f"Training {spec.label}…")
                 pipe = build_pipeline(spec, dict(spec.default_params), opts)
+                panel.append((key, build_pipeline(spec, dict(spec.default_params), opts)))
                 res = ev.evaluate_classification(
                     pipe, X, y, key=key, label=spec.label, scoring=scoring,
                     cv=cv, is_grouped=grouped, groups=groups if grouped else None,
                     cv_desc=cv_desc, params=dict(spec.default_params),
                     class_names=class_names)
+                if opts.class_weight_balanced and balancing_capability(spec) is None:
+                    res.diagnostics.append(Diagnostic(
+                        "warning", f"'Balance classes' has no effect on "
+                        f"{spec.label}: it has no class_weight or priors "
+                        f"equivalent, so it was trained unbalanced."))
                 if do_chance and not is_cancelled():
                     try:
                         ev.add_chance_level(
@@ -373,8 +424,16 @@ class MachineLearningWorkspace(QtWidgets.QWidget):
                     except Exception:  # noqa: BLE001
                         logger.exception("Chance test failed for %s", key)
                 evals.append(res)
+            omni = None
+            if do_omnibus and len(panel) >= 2 and not is_cancelled():
+                def omni_prog(pct, msg):
+                    progress(90 + 0.1 * pct, msg)
+                omni = ev.omnibus_permutation(
+                    panel, X, y, cv=cv, groups=groups if grouped else None,
+                    scoring=scoring, n_permutations=n_omni, seed=seed,
+                    progress=omni_prog, is_cancelled=is_cancelled)
             progress(100, "done")
-            return ev.rank_models(evals)
+            return ev.rank_models(evals), omni
 
         self._start_worker(job, cv_desc, scoring, opts)
 
@@ -405,10 +464,13 @@ class MachineLearningWorkspace(QtWidgets.QWidget):
         self.cancel_btn.setEnabled(False)
         QtWidgets.QMessageBox.critical(self, "Training error", msg)
 
-    def _on_done(self, evals) -> None:
+    def _on_done(self, result) -> None:
         self.run_btn.setEnabled(True)
         self.cancel_btn.setEnabled(False)
+        evals, omni = result
         self._evals = evals
+        self._omni = omni
+        self._corrected = self._compute_corrected(evals, omni)
         self._populate_table()
         self._plot_comparison()
         cfg = self._build_config()
@@ -419,9 +481,32 @@ class MachineLearningWorkspace(QtWidgets.QWidget):
         self._last_report = report
         diags = [d for e in evals for d in e.diagnostics
                  if getattr(d, "level", "info") != "info"]
-        self.diag.setHtml("<br>".join(
+        banner = ""
+        if omni is not None:
+            best_label = next((e.label for e in evals if e.key == omni.best_key),
+                              omni.best_key)
+            sig = "significant" if omni.p_omnibus < 0.05 else "NOT significant"
+            banner = (
+                f'<p style="color:#1c3d5a"><b>Best-of-panel omnibus:</b> best '
+                f'model {best_label} (score {omni.best_score:.3f}); family-wise '
+                f'p={omni.p_omnibus:.3g} — <b>{sig}</b> after correcting for '
+                f'choosing the best of {len(omni.observed)} models. The '
+                f'"p (corr)" column is each model vs this same null.</p>')
+        self.diag.setHtml(banner + ("<br>".join(
             f'<span style="color:#9a6b00">[{d.level}]</span> {d.message}'
-            for d in diags) or "No warnings.")
+            for d in diags) or "No per-model warnings."))
+
+    def _compute_corrected(self, evals, omni) -> dict:
+        """Corrected p per model: omnibus max-statistic if available, else Holm
+        across the per-model permutation p-values."""
+        if omni is not None:
+            return dict(omni.corrected_p)
+        ps = [e.chance_p for e in evals]
+        if len(ps) > 1 and all(p is not None for p in ps):
+            from neurobci.analysis.stats.correction import correct
+            _, pc = correct(np.array(ps, float), "holm")
+            return {e.key: float(pc[i]) for i, e in enumerate(evals)}
+        return {}
 
     def _build_config(self) -> AnalysisConfig:
         return AnalysisConfig(
@@ -434,6 +519,7 @@ class MachineLearningWorkspace(QtWidgets.QWidget):
                     "preproc": f"scaler={self.scaler.currentText()}, "
                                f"k={self.select_k.value() or 'off'}, "
                                f"balance={self.class_weight.isChecked()}",
+                    "omnibus_p": None if self._omni is None else self._omni.p_omnibus,
                     "models": [e.key for e in self._evals]})
 
     # ----- results ------------------------------------------------------- #
@@ -441,9 +527,11 @@ class MachineLearningWorkspace(QtWidgets.QWidget):
         self.table.setRowCount(len(self._evals))
         for row, e in enumerate(self._evals):
             r = e.summary_row()
+            corr = self._corrected.get(e.key)
             vals = [r["model"], f"{r['cv_mean']:.3f}", f"{r['cv_std']:.3f}",
                     r["ci95"], "—" if r["chance"] is None else f"{r['chance']:.3f}",
                     "—" if r["p_vs_chance"] is None else f"{r['p_vs_chance']:.3g}",
+                    "—" if corr is None else f"{corr:.3g}",
                     f"{r['fit_s']:.2f}"]
             for col, v in enumerate(vals):
                 item = QtWidgets.QTableWidgetItem(str(v))

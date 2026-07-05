@@ -78,9 +78,15 @@ class ConditionSelector(QtWidgets.QWidget):
         self.baseline.setChecked(True)
         self.bmin = self._dspin(-2, 0, -0.1)
         self.bmax = self._dspin(-2, 2, 0.0)
-        self.reject = QtWidgets.QCheckBox("Reject by amplitude")
+        self.reject = QtWidgets.QCheckBox("Reject by peak-to-peak amplitude")
         self.reject.setChecked(True)
         self.reject_uv = self._dspin(10, 1000, 150)
+        self.reject_uv.setToolTip(
+            "Drop an epoch if its PEAK-TO-PEAK amplitude (max − min, µV) on any "
+            "channel exceeds this, measured on the EPOCHED, PREPROCESSED, "
+            "baseline-corrected signal shown below — not the raw signal and not "
+            "a feature-set band. This is the same signal both the Statistics "
+            "and ML tabs analyse.")
         self.preproc = QtWidgets.QComboBox()
         self.preproc.addItem("Configured pipeline (offline)", True)
         self.preproc.addItem("Raw (no preprocessing)", False)
@@ -90,7 +96,7 @@ class ConditionSelector(QtWidgets.QWidget):
         form.addRow("baseline start:", self.bmin)
         form.addRow("baseline end:", self.bmax)
         form.addRow(self.reject)
-        form.addRow("reject (uV):", self.reject_uv)
+        form.addRow("reject (µV p-p):", self.reject_uv)
         form.addRow("Preprocessing:", self.preproc)
         lay.addWidget(win)
 
@@ -205,7 +211,15 @@ class ConditionSelector(QtWidgets.QWidget):
         finally:
             QtWidgets.QApplication.restoreOverrideCursor()
         counts = ", ".join(f"{k}={v}" for k, v in bundle.class_counts().items())
-        self.status.setText(f"{bundle.n_trials} trials ({counts}) · {note}")
+        if self.reject.isChecked():
+            rej = (f"rejected {bundle.n_rejected} epoch(s) with peak-to-peak "
+                   f"> {self.reject_uv.value():.0f} µV")
+        else:
+            rej = "no amplitude rejection"
+        self.status.setText(
+            f"{bundle.n_trials} epochs kept ({counts}); {rej}; out-of-bounds "
+            f"{bundle.n_out_of_bounds}.\nRejection/features measured on: "
+            f"{bundle.preprocessing}. {note}")
         return bundle
 
     def _emit_bundle(self) -> None:

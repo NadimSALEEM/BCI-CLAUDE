@@ -75,7 +75,9 @@ def report_for_models(config, bundle, evaluations, figures=None) -> HTMLReport:
         f"estimate generalisation, not mechanism: a high score shows the chosen "
         f"features are predictive, not which brain process drives them. Inspect "
         f"spatial patterns / importances for interpretation, and validate on "
-        f"independent data before drawing conclusions.")
+        f"independent data before drawing conclusions. The 95% CI is a "
+        f"t-interval over CV folds (a spread indicator, not a significance "
+        f"test); significance comes from the permutation p / corrected p.")
     for fig, cap in (figures or []):
         rep.add_figure(fig, cap)
     return rep

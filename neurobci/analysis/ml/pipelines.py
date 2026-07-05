@@ -13,6 +13,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+import numpy as np
+from sklearn.base import BaseEstimator, ClassifierMixin, clone
+
 
 @dataclass
 class PreprocOptions:
@@ -30,17 +33,73 @@ def _scaler(name: str):
             "minmax": MinMaxScaler}.get(name, lambda: None)()
 
 
+class UniformPriorClassifier(ClassifierMixin, BaseEstimator):
+    """Wrap a priors-based classifier (LDA/QDA/GaussianNB) to fit with uniform
+    class priors, so "Balance classes" has effect for models that have no
+    ``class_weight``. Priors are set from the *training fold's* classes at fit
+    time, so it stays leakage-safe under cross-validation.
+    """
+
+    def __init__(self, base=None):
+        self.base = base
+
+    def fit(self, X, y):
+        self.classes_ = np.unique(y)
+        k = len(self.classes_)
+        self.base_ = clone(self.base).set_params(priors=[1.0 / k] * k)
+        self.base_.fit(X, y)
+        return self
+
+    def predict(self, X):
+        return self.base_.predict(X)
+
+    def predict_proba(self, X):
+        return self.base_.predict_proba(X)
+
+
+def _balance_estimator(est):
+    """Return an estimator that honours class balancing, or ``est`` unchanged.
+
+    Prefers native ``class_weight='balanced'``; falls back to uniform priors for
+    priors-based classifiers; leaves models with neither untouched (the UI warns
+    that balancing does not apply to those, e.g. kNN / boosting).
+    """
+    params = est.get_params()
+    if "class_weight" in params:
+        est.set_params(class_weight="balanced")
+        return est
+    if "priors" in params:
+        return UniformPriorClassifier(base=est)
+    return est
+
+
 def _maybe_balance(estimator):
-    """Set ``class_weight='balanced'`` on the estimator (or its last step)."""
+    """Apply class balancing to the final predictive step (or the estimator)."""
+    if hasattr(estimator, "steps"):
+        name, last = estimator.steps[-1]
+        estimator.steps[-1] = (name, _balance_estimator(last))
+        return estimator
+    return _balance_estimator(estimator)
+
+
+def balancing_capability(spec) -> str | None:
+    """How a model can be balanced: ``'class_weight'``, ``'priors'`` or ``None``.
+
+    ``None`` means "Balance classes" has no effect for this model (e.g. kNN,
+    Gradient Boosting, AdaBoost) -- the UI surfaces that rather than silently
+    ignoring the checkbox.
+    """
     try:
-        last = estimator
-        if hasattr(estimator, "steps"):
-            last = estimator.steps[-1][1]
-        if "class_weight" in last.get_params():
-            last.set_params(class_weight="balanced")
-    except Exception:  # noqa: BLE001 - estimator simply may not support it
-        pass
-    return estimator
+        est = spec.build(dict(spec.default_params))
+    except Exception:  # noqa: BLE001
+        return None
+    target = est.steps[-1][1] if hasattr(est, "steps") else est
+    params = target.get_params()
+    if "class_weight" in params:
+        return "class_weight"
+    if "priors" in params:
+        return "priors"
+    return None
 
 
 def build_pipeline(spec, params: dict | None = None,

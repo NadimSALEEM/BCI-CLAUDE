@@ -338,3 +338,76 @@ def _cluster_purity(y_true, labels) -> float:
 def rank_models(evaluations: list[ModelEvaluation]) -> list[ModelEvaluation]:
     """Sort evaluations by mean CV score (descending)."""
     return sorted(evaluations, key=lambda e: e.mean_score, reverse=True)
+
+
+# --------------------------------------------------------------------------- #
+# Multiple-comparison correction across a panel of models
+# --------------------------------------------------------------------------- #
+
+@dataclass
+class OmnibusResult:
+    scoring: str
+    n_permutations: int
+    observed: dict                  # key -> observed CV-mean score
+    best_key: str
+    best_score: float
+    p_omnibus: float                # P(best-of-panel >= observed best | H0)
+    corrected_p: dict               # key -> selection-aware (max-statistic) p
+    seed: object = None
+
+
+def _permute_labels(y, groups, rng):
+    """Shuffle labels; within groups when grouped (preserves subject blocks)."""
+    if groups is None:
+        return rng.permutation(y)
+    out = np.array(y).copy()
+    for g in np.unique(groups):
+        idx = np.where(np.asarray(groups) == g)[0]
+        out[idx] = rng.permutation(out[idx])
+    return out
+
+
+def omnibus_permutation(models, X, y, *, cv, groups=None,
+                        scoring="balanced_accuracy", n_permutations=500,
+                        seed=42, n_jobs=1, progress=None, is_cancelled=None):
+    """Best-of-panel permutation test (family-wise, selection-aware).
+
+    ``models`` is ``[(key, pipeline), ...]``. Under the null the labels carry no
+    information, so we reshuffle them, re-score *every* model, and record the
+    panel's best score. Repeating builds the null distribution of the
+    *maximum* score -- which is what you are implicitly optimising when you
+    report "the best of N models". The omnibus p compares the real best score
+    to that null; each model's ``corrected_p`` is P(null-best >= its score),
+    a max-statistic FWER correction (Westfall-Young style).
+    """
+    from sklearn.model_selection import cross_val_score
+    X, y = np.asarray(X), np.asarray(y)
+    rng = np.random.default_rng(seed)
+
+    def panel_scores(labels):
+        return [float(np.mean(cross_val_score(pipe, X, labels, cv=cv,
+                groups=groups, scoring=scoring, n_jobs=n_jobs)))
+                for _, pipe in models]
+
+    observed = dict(zip((k for k, _ in models), panel_scores(y)))
+    best_key = max(observed, key=observed.get)
+    best_score = observed[best_key]
+
+    null_best = np.empty(n_permutations)
+    for p in range(n_permutations):
+        if is_cancelled is not None and is_cancelled():
+            null_best = null_best[:p]
+            break
+        null_best[p] = max(panel_scores(_permute_labels(y, groups, rng)))
+        if progress is not None:
+            progress(100 * (p + 1) / n_permutations,
+                     f"omnibus permutation {p + 1}/{n_permutations}")
+
+    m = null_best.size
+    p_omni = (np.sum(null_best >= best_score) + 1) / (m + 1)
+    corrected = {k: float((np.sum(null_best >= v) + 1) / (m + 1))
+                 for k, v in observed.items()}
+    return OmnibusResult(scoring=scoring, n_permutations=int(m),
+                         observed=observed, best_key=best_key,
+                         best_score=float(best_score), p_omnibus=float(p_omni),
+                         corrected_p=corrected, seed=seed)

@@ -83,11 +83,12 @@ def _clf_specs() -> list[ModelSpec]:
                        {"max_depth": 5}, {"max_depth": [3, 5, 10, None]}, proba=True))
     s.append(ModelSpec("svm_linear", "SVM (linear)", "classification", "tabular",
                        lambda p: SVC(kernel="linear", probability=True,
-                                     C=p.get("C", 1.0)),
+                                     C=p.get("C", 1.0), random_state=0),
                        {"C": 1.0}, {"C": [0.1, 1.0, 10.0]}, proba=True))
     s.append(ModelSpec("svm_rbf", "SVM (RBF)", "classification", "tabular",
                        lambda p: SVC(kernel="rbf", probability=True,
-                                     C=p.get("C", 1.0), gamma=p.get("gamma", "scale")),
+                                     C=p.get("C", 1.0), gamma=p.get("gamma", "scale"),
+                                     random_state=0),
                        {"C": 1.0, "gamma": "scale"},
                        {"C": [0.1, 1.0, 10.0], "gamma": ["scale", 0.01, 0.1]},
                        proba=True))
@@ -149,7 +150,7 @@ def _build_csp_svm(p):
     from sklearn.pipeline import Pipeline
     from sklearn.svm import SVC
     return Pipeline([("csp", CSP(n_components=p.get("n_components", 6))),
-                     ("svm", SVC(kernel="linear", probability=True))])
+                     ("svm", SVC(kernel="linear", probability=True, random_state=0))])
 
 
 def _build_xdawn_lr(p):

@@ -40,6 +40,8 @@ class ControlWorkspace(QtWidgets.QWidget):
         self._item_scatter = None
         self._cursor_scatter = None
         self._trail = None
+        # Seeded so a control session is reproducible (re-seeded on Reset).
+        self._rng = np.random.default_rng(0)
         self._build()
 
     def _build(self) -> None:

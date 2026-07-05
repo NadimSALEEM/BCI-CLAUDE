@@ -54,8 +54,11 @@ def _raw_family(bundle, spec: RawEpochsSpec):
         X = X[:, :, m]
         times = times[m]
     if spec.downsample > 1:
-        X = X[:, :, ::spec.downsample]
-        times = times[::spec.downsample]
+        # Anti-aliased decimation (low-pass then subsample), so downsampling
+        # never aliases high-frequency content even on an un-low-passed signal.
+        from scipy.signal import decimate
+        X = decimate(X, spec.downsample, axis=2, ftype="iir", zero_phase=True)
+        times = times[::spec.downsample][:X.shape[2]]
     names = [f"{bundle.channel_names[c]}@{t:.3f}s"
              for c in ch_idx for t in times]
     return X.reshape(X.shape[0], -1), names

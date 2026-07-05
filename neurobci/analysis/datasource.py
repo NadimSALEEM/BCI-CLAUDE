@@ -47,6 +47,8 @@ class EpochBundle:
     groups: np.ndarray
     metadata: dict[str, np.ndarray] = field(default_factory=dict)
     preprocessing: str = ""
+    n_rejected: int = 0            # epochs dropped by peak-to-peak amplitude
+    n_out_of_bounds: int = 0       # onsets whose window fell outside the recording
 
     # ----- shapes -------------------------------------------------------- #
     @property
@@ -240,7 +242,9 @@ def bundle_from_session(
         channel_names=list(result.channel_names),
         channel_kinds=list(result.channel_kinds),
         groups=np.full(X.shape[0], group, dtype=int),
-        metadata=metadata, preprocessing=result.preprocessing)
+        metadata=metadata, preprocessing=result.preprocessing,
+        n_rejected=int(sum(c.n_rejected for c in result.conditions)),
+        n_out_of_bounds=int(sum(c.n_out_of_bounds for c in result.conditions)))
 
 
 def concat_bundles(bundles: list[EpochBundle]) -> EpochBundle:
@@ -267,4 +271,6 @@ def concat_bundles(bundles: list[EpochBundle]) -> EpochBundle:
         X=np.concatenate([b.X for b in bundles], axis=0),
         y=np.concatenate([b.y for b in bundles], axis=0),
         groups=np.concatenate([b.groups for b in bundles], axis=0),
-        metadata=metadata)
+        metadata=metadata,
+        n_rejected=int(sum(b.n_rejected for b in bundles)),
+        n_out_of_bounds=int(sum(b.n_out_of_bounds for b in bundles)))
