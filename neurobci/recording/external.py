@@ -24,7 +24,7 @@ from pathlib import Path
 import numpy as np
 
 from neurobci.core.electrodes import classify_channel
-from neurobci.recording.exporter import LoadedSession, load_session
+from neurobci.recording.exporter import AuxStream, LoadedSession, load_session
 
 logger = logging.getLogger(__name__)
 
@@ -110,6 +110,7 @@ def _session_from_xdf_streams(
 
     sfreq = _xdf_sfreq(info, ts)
     markers = _xdf_markers(streams, ts, sfreq)
+    aux = _xdf_aux_streams(streams, eeg)
 
     stream_name = _first(info.get("name")) or path.stem
     meta = {
@@ -125,11 +126,40 @@ def _session_from_xdf_streams(
         "participant_id": _participant_from_path(path),
     }
     logger.info(
-        "Loaded XDF %s: stream %r, %d samples, %d ch @ %.1f Hz, %d markers.",
+        "Loaded XDF %s: stream %r, %d samples, %d ch @ %.1f Hz, %d markers, "
+        "%d aux stream(s): %s.",
         path.name, stream_name, n_samples, n_channels, sfreq, len(markers),
+        len(aux), ", ".join(aux) or "none",
     )
     return LoadedSession(path=path, meta=meta, data=data, timestamps=ts,
-                         markers=markers)
+                         markers=markers, aux_streams=aux)
+
+
+def _xdf_aux_streams(streams: list, eeg: dict) -> dict:
+    """Collect every *other* numeric stream (accelerometer, quality, ...).
+
+    The chosen EEG stream and all string/marker streams are excluded; whatever
+    remains (a device's accelerometer, per-channel quality/SQI, PPG, ...) is
+    preserved on its own timebase as an :class:`AuxStream` keyed by stream name.
+    """
+    aux: dict = {}
+    for s in streams:
+        if s is eeg or _is_string_stream(s):
+            continue
+        info = s["info"]
+        ts = np.asarray(s["time_stamps"], dtype=np.float64)
+        if ts.size == 0:
+            continue
+        data = np.asarray(s["time_series"], dtype=np.float64)
+        if data.ndim == 1:
+            data = data.reshape(-1, 1)
+        n_ch = data.shape[1]
+        names, _kinds, units = _xdf_channels(info, n_ch)
+        name = _first(info.get("name")) or (_first(info.get("type")) or "aux")
+        aux[name] = AuxStream(
+            name=name, stype=(_first(info.get("type")) or ""), data=data,
+            timestamps=ts, srate=_xdf_sfreq(info, ts), labels=names, units=units)
+    return aux
 
 
 def _pick_eeg_stream(streams: list, name: str | None) -> dict | None:

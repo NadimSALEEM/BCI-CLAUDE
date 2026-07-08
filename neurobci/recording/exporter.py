@@ -28,12 +28,40 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass
+class AuxStream:
+    """A non-EEG stream recorded alongside the EEG (accelerometer, quality, ...).
+
+    Kept on its *own* timebase (``timestamps``) at its *own* rate; align it to
+    the EEG clock with :func:`neurobci.quality.aux.align_to_eeg` before use --
+    never assume shared sample indices, because the rates differ (e.g. EEG
+    500 Hz vs accelerometer 100 Hz vs quality 1 Hz).
+    """
+
+    name: str
+    stype: str                  # LSL stream type, e.g. "Accelerometer", "Quality"
+    data: np.ndarray            # (n_samples, n_channels) float
+    timestamps: np.ndarray      # (n_samples,) float64 LSL time
+    srate: float
+    labels: list[str] = field(default_factory=list)
+    units: list[str] = field(default_factory=list)
+
+    @property
+    def n_channels(self) -> int:
+        return self.data.shape[1] if self.data.ndim == 2 else 1
+
+    @property
+    def n_samples(self) -> int:
+        return self.data.shape[0]
+
+
+@dataclass
 class LoadedSession:
     path: Path
     meta: dict
     data: np.ndarray            # (n_samples, n_channels) float32, microvolts
     timestamps: np.ndarray      # (n_samples,) float64
     markers: list[dict] = field(default_factory=list)
+    aux_streams: dict = field(default_factory=dict)   # name -> AuxStream
 
     @property
     def channel_names(self) -> list[str]:
